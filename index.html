@@ -90,7 +90,7 @@
   const k = q.get('k') || '', topic = q.get('t') || '';
   const server = (q.get('s') || 'https://ntfy.sh').replace(/\/+$/, '');
   const GIRO = 282.74;
-  const VERSIONE = '20nov-1620';  // finisce nel registro del gestionale: si vede quale pagina ha usato il telefono
+  const VERSIONE = '20nov-1630';  // finisce nel registro del gestionale: si vede quale pagina ha usato il telefono
   let audio = null, wake = null, suonato = false, fermato = false, lampo = null;
   let programmati = [], oraSveglia = 0;
 
@@ -102,6 +102,7 @@
       if (tg.setBackgroundColor) tg.setBackgroundColor('#1d2024');
       // In alto a sinistra niente «X»: con il tasto Indietro mostrato Telegram mette la freccia al posto della X.
       // La freccia non chiude: ricorda solo come abbassare la pagina. Si chiude solo con «Ferma».
+      if (tg.onEvent) tg.onEvent('activated', () => { if (daChiudere) setTimeout(() => { try { tg.close(); } catch (e) {} }, 150); });  // riaperta dopo la sveglia: si chiude
       if (tg.BackButton) { tg.BackButton.show(); tg.BackButton.onClick(() => { vibra(false); evidenziaNota(); }); }
     }
   } catch (e) {}
@@ -129,7 +130,7 @@
   async function biglietto(e) {
     if (!k || !topic) return false;
     // con il biglietto va anche un controllo: la pagina ha il suono? è visibile o abbassata?
-    const corpo = JSON.stringify({ k, e, v: VERSIONE, audio: mediaVa ? 'file' : audio ? audio.state : 'nessuno', vis: document.visibilityState });
+    const corpo = JSON.stringify({ k, e, v: VERSIONE, attiva: tg ? tg.isActive : null, tgv: tg ? tg.version : null, audio: mediaVa ? 'file' : audio ? audio.state : 'nessuno', vis: document.visibilityState });
     for (let i = 0; i < 3; i++) {
       try {
         const ctl = new AbortController(), stop = setTimeout(() => ctl.abort(), 3000);
@@ -332,8 +333,14 @@
   // recupero); se Telegram non la chiude mentre è abbassata, ci si riprova appena torna visibile.
   let chiusuraDetta = false;
   function chiudi() {
-    if (document.visibilityState !== 'visible') daChiudere = true;
+    const abbassata = document.visibilityState !== 'visible' || (tg && tg.isActive === false);
+    if (abbassata) daChiudere = true;
     if (!chiusuraDetta) { chiusuraDetta = true; biglietto('chiudo'); }  // nel registro: la pagina ha provato a chiudersi
+    if (abbassata) {
+      // Telegram ignora la chiusura di una pagina abbassata: prima si prova a farla tornare su (expand), poi si chiude.
+      try { if (tg && tg.expand) tg.expand(); } catch (e) {}
+      setTimeout(() => { try { if (tg && tg.close) tg.close(); } catch (e) {} }, 350);
+    }
     try { if (tg && tg.close) tg.close(); } catch (e) {}
   }
   function chiudiAllaFineSuono(nodi) {  // la fine dell'ultimo suono sveglia la pagina anche abbassata: lì si chiude
