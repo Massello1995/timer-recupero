@@ -1,0 +1,245 @@
+<!doctype html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex">
+<title>Timer recupero</title>
+<!-- Pagina del timer di recupero aperta dal bot Telegram (Mini App). Non contiene dati: riceve solo l'ora di fine
+     (?fine=millisecondi&sec=durata) calcolata dal gestionale e suona a fine recupero. Nessuna richiesta verso il gestionale. -->
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<style>
+  :root {
+    --canvas: #1d2024; --scheda: #262a2f; --bordo: #3a3f46; --testo: #e3e5e9; --muto: #a6adb7;
+    --rosso: #e0263d; --rosso-scuro: #43202a; --ok: #4fc58d; --anello-vuoto: #343940;
+    --font: "Barlow", "Segoe UI", system-ui, -apple-system, Roboto, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body {
+    background: var(--canvas); color: var(--testo); font-family: var(--font);
+    display: flex; flex-direction: column; align-items: center; justify-content: space-between;
+    min-height: 100dvh; padding: max(16px, env(safe-area-inset-top)) 16px max(20px, env(safe-area-inset-bottom));
+    -webkit-tap-highlight-color: transparent; user-select: none; touch-action: manipulation;
+    transition: background-color .25s ease;
+  }
+  body.fine { background: var(--rosso-scuro); }
+  body.fine.lampo { background: var(--rosso); }
+  @media (prefers-reduced-motion: reduce) { body, body.fine.lampo { transition: none; } body.fine.lampo { background: var(--rosso-scuro); } }
+  header { text-align: center; width: 100%; }
+  .titolo { font-size: 18px; font-weight: 600; letter-spacing: .02em; color: var(--muto); margin: 4px 0 0; }
+  .stato { display: inline-flex; align-items: center; gap: 8px; margin-top: 10px; padding: 8px 14px; border-radius: 999px;
+           font-size: 15px; font-weight: 600; background: var(--scheda); border: 1px solid var(--bordo); color: var(--muto); }
+  .stato.on { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 45%, transparent); }
+  .stato svg { width: 18px; height: 18px; flex: none; }
+  main { position: relative; width: min(88vw, 62dvh, 420px); aspect-ratio: 1; display: grid; place-items: center; }
+  main svg.anello { position: absolute; inset: 0; width: 100%; height: 100%; transform: rotate(-90deg); }
+  .anello circle { fill: none; stroke-width: 7; }
+  .anello .vuoto { stroke: var(--anello-vuoto); }
+  .anello .pieno { stroke: var(--rosso); stroke-linecap: round; transition: stroke-dashoffset 1s linear; }
+  @media (prefers-reduced-motion: reduce) { .anello .pieno { transition: none; } }
+  .tempo { font-variant-numeric: tabular-nums; font-weight: 700; font-size: min(24vw, 15dvh, 120px); line-height: 1; letter-spacing: -.02em; }
+  .sotto { position: absolute; bottom: 22%; font-size: 17px; color: var(--muto); font-weight: 500; text-align: center; padding: 0 12%; }
+  body.fine .tempo { font-size: min(11vw, 8dvh, 56px); text-align: center; max-width: 78%; line-height: 1.1; overflow-wrap: anywhere; }
+  html, body { overflow-x: hidden; }
+  footer { width: 100%; max-width: 420px; display: grid; gap: 10px; }
+  button { font: inherit; font-size: 18px; font-weight: 700; min-height: 56px; border-radius: 14px; border: 0; cursor: pointer; width: 100%; }
+  button:focus-visible { outline: 3px solid #fff; outline-offset: 3px; }
+  .primario { background: var(--rosso); color: #fff; }
+  .primario:active { filter: brightness(1.12); }
+  body.fine .primario { background: #fff; color: #1d2024; }
+  body.fine .nota, body.fine .titolo { color: #f3d6da; }
+  .secondario { background: var(--scheda); color: var(--testo); border: 1px solid var(--bordo); }
+  .nota { font-size: 14px; color: var(--muto); text-align: center; line-height: 1.45; margin: 2px 4px 0; }
+  .velo { position: fixed; inset: 0; background: rgb(15 17 20 / .86); display: grid; place-items: center; padding: 24px; z-index: 5; }
+  .velo[hidden] { display: none; }
+  .velo .box { max-width: 360px; text-align: center; }
+  .velo .grande { font-size: 22px; font-weight: 700; margin: 0 0 10px; }
+  .velo p { color: var(--muto); font-size: 16px; line-height: 1.5; margin: 0 0 18px; }
+  .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+</style>
+</head>
+<body>
+<header>
+  <p class="titolo">Recupero</p>
+  <span class="stato" id="stato" role="status">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M11 5 6 9H2v6h4l5 4V5z"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"/></svg>
+    <span id="statoTesto">Sveglia non attiva</span>
+  </span>
+</header>
+
+<main>
+  <svg class="anello" viewBox="0 0 100 100" aria-hidden="true">
+    <circle class="vuoto" cx="50" cy="50" r="45"/>
+    <circle class="pieno" id="pieno" cx="50" cy="50" r="45" stroke-dasharray="282.74" stroke-dashoffset="0"/>
+  </svg>
+  <div class="tempo" id="tempo" role="timer" aria-live="off">--:--</div>
+  <div class="sotto" id="sotto"></div>
+</main>
+
+<footer>
+  <button class="primario" id="azione" type="button">Chiudi</button>
+  <p class="nota" id="nota">Tieni questa pagina aperta: a fine recupero suona forte e vibra. Se chiudi la pagina o spegni lo schermo, ti avvisa il bot (con la suoneria accesa nelle Opzioni).</p>
+</footer>
+
+<div class="velo" id="velo">
+  <div class="box">
+    <p class="grande">Tocca per attivare la sveglia</p>
+    <p>Il telefono permette il suono solo dopo un tocco. Alza il volume dei media (quello di musica e video).</p>
+    <button class="primario" id="attiva" type="button">Attiva la sveglia</button>
+  </div>
+</div>
+<div class="sr" aria-live="assertive" id="annuncio"></div>
+
+<script>
+(() => {
+  const tg = window.Telegram && window.Telegram.WebApp;
+  const $ = id => document.getElementById(id);
+  const q = new URLSearchParams(location.search);
+  const sec = Math.max(1, Math.min(3600, parseInt(q.get('sec'), 10) || 0));
+  let fine = parseInt(q.get('fine'), 10) || 0;
+  const GIRO = 282.74;
+  let audio = null, wake = null, suonato = false, fermato = false, ultimoBip = -1;
+  let programmati = [], oraSveglia = 0;  // sveglia già programmata nel motore audio (suona anche con la pagina abbassata)
+
+  try {
+    if (tg) {
+      tg.ready(); tg.expand();
+      if (tg.disableVerticalSwipes) tg.disableVerticalSwipes();  // una strisciata non chiude la pagina per sbaglio
+      if (tg.setHeaderColor) tg.setHeaderColor('#1d2024');
+      if (tg.setBackgroundColor) tg.setBackgroundColor('#1d2024');
+    }
+  } catch (e) {}
+
+  // l'orologio del telefono può essere un po' diverso da quello del PC: il recupero non dura mai più di "sec"
+  const adesso = Date.now();
+  if (!fine || !q.get('sec')) {
+    $('tempo').textContent = '--:--';
+    $('sotto').textContent = 'Apri il timer dal tasto del bot';
+    $('velo').hidden = true;
+    $('nota').hidden = true;
+    $('azione').onclick = chiudi;
+    return;
+  }
+  if (fine - adesso > sec * 1000 + 2000) fine = adesso + sec * 1000;
+  const giaFinito = fine - adesso < -5000;  // aperta tardi: niente sveglia
+
+  const mmss = ms => { const s = Math.max(0, Math.ceil(ms / 1000)); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`; };
+  const annuncia = t => { $('annuncio').textContent = ''; setTimeout(() => { $('annuncio').textContent = t; }, 50); };
+
+  function vibra(tipo) {
+    try { if (tg && tg.HapticFeedback) { tipo === 'forte' ? tg.HapticFeedback.notificationOccurred('warning') : tg.HapticFeedback.impactOccurred('light'); } } catch (e) {}
+    try { if (navigator.vibrate) navigator.vibrate(tipo === 'forte' ? [400, 150, 400, 150, 400] : 60); } catch (e) {}
+  }
+
+  function bip(freq, dur, vol, quando) {
+    if (!audio) return;
+    const t0 = audio.currentTime + (quando || 0);
+    const o = audio.createOscillator(), g = audio.createGain();
+    o.type = 'square'; o.frequency.value = freq;
+    g.gain.setValueAtTime(0.0001, t0);
+    g.gain.exponentialRampToValueAtTime(vol, t0 + 0.01);
+    g.gain.setValueAtTime(vol, t0 + dur - 0.03);
+    g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+    o.connect(g).connect(audio.destination);
+    o.start(t0); o.stop(t0 + dur + 0.02);
+    return o;
+  }
+
+  function sveglia(tra) {  // circa 8 secondi di "bip-bip-bip" forte, tra "tra" secondi; -> i suoni programmati
+    const l = [];
+    for (let i = 0; i < 8; i++) {
+      l.push(bip(1046, 0.16, 0.9, (tra || 0) + i), bip(1318, 0.16, 0.9, (tra || 0) + i + 0.22), bip(1046, 0.16, 0.9, (tra || 0) + i + 0.44));
+    }
+    return l.filter(Boolean);
+  }
+
+  // Appena la sveglia è attiva si programma già nel motore audio all'ora di fine: se abbassi la pagina dentro Telegram
+  // (strisciata verso il basso) e il telefono la lascia viva, suona lo stesso. A schermo spento o in un'altra app di solito
+  // il telefono la ferma: lì avvisano i messaggi del bot.
+  function programma() {
+    if (!audio || programmati.length) return;
+    const tra = (fine - Date.now()) / 1000;
+    if (tra <= 0.3) return;
+    oraSveglia = audio.currentTime + tra;
+    programmati = sveglia(tra);
+  }
+
+  function togliProgrammati() {
+    programmati.forEach(o => { try { o.stop(); } catch (e) {} });
+    programmati = [];
+  }
+
+  async function attiva() {
+    try {
+      const AC = window.AudioContext || window.webkitAudioContext;
+      if (AC && !audio) audio = new AC();
+      if (audio && audio.state === 'suspended') await audio.resume();
+      bip(880, 0.08, 0.25, 0);  // piccolo bip di prova: la sveglia è pronta
+    } catch (e) {}
+    await tieniAcceso();
+    $('velo').hidden = true;
+    programma();
+    const ok = audio && audio.state === 'running';
+    $('stato').classList.toggle('on', !!ok);
+    $('statoTesto').textContent = ok ? 'Sveglia attiva' : 'Suono non disponibile: resta la vibrazione';
+    vibra('leggera');
+  }
+
+  async function tieniAcceso() {
+    try { if ('wakeLock' in navigator && !wake) { wake = await navigator.wakeLock.request('screen'); wake.addEventListener('release', () => { wake = null; }); } } catch (e) {}
+  }
+
+  function chiudi() {
+    fermato = true;
+    togliProgrammati();
+    try { if (audio) audio.close(); } catch (e) {}
+    if (tg && tg.close) tg.close(); else window.close();
+  }
+
+  function finito() {
+    document.body.classList.add('fine');
+    $('tempo').textContent = 'Prossima serie!';
+    $('sotto').textContent = '';
+    $('pieno').style.strokeDashoffset = GIRO;
+    $('azione').textContent = 'Fermo, chiudi';
+    if (!suonato && !giaFinito && Date.now() - fine < 5000) {  // tornato sulla pagina molto dopo la fine: niente sveglia in ritardo
+      suonato = true;
+      annuncia('Recupero finito: prossima serie');
+      if (!programmati.length) sveglia();  // già programmata: sta suonando da sola
+      let n = 0;
+      const lampo = setInterval(() => {
+        if (fermato || n++ > 15) { clearInterval(lampo); document.body.classList.remove('lampo'); return; }
+        document.body.classList.toggle('lampo');
+        if (n % 2) vibra('forte');
+      }, 500);
+    }
+  }
+
+  function giro() {
+    if (fermato) return;
+    const resto = fine - Date.now();
+    if (resto <= 0) { finito(); return; }
+    $('tempo').textContent = mmss(resto);
+    $('pieno').style.strokeDashoffset = GIRO * (1 - Math.min(1, resto / (sec * 1000)));
+    const s = Math.ceil(resto / 1000);
+    if (s <= 3 && s !== ultimoBip) { ultimoBip = s; bip(660, 0.12, 0.5, 0); vibra('leggera'); }  // 3, 2, 1
+    $('sotto').textContent = s <= 10 ? 'Preparati' : `di ${mmss(sec * 1000)}`;
+    setTimeout(giro, Math.min(250, resto));
+  }
+
+  $('attiva').onclick = attiva;
+  $('azione').onclick = chiudi;
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState !== 'visible') return;
+    tieniAcceso();
+    // il telefono aveva fermato l'audio e il recupero è finito da più di 5 secondi: niente sveglia in ritardo
+    if (programmati.length && audio && audio.currentTime < oraSveglia && Date.now() > fine + 5000) togliProgrammati();
+    if (audio && audio.state === 'suspended') audio.resume();
+  });
+  if (giaFinito) { $('velo').hidden = true; finito(); $('sotto').textContent = 'Il recupero era già finito'; }
+  else giro();
+})();
+</script>
+</body>
+</html>
