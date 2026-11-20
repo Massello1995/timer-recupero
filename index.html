@@ -258,6 +258,9 @@
         mediaVa = true; riallinea(); togliProgrammati(); aggiornaStato();
         if (!prontaMedia || mutaDetta) { prontaMedia = true; mutaDetta = false; biglietto('pronta'); }
       });
+      media.addEventListener('ended', () => {  // sveglia finita (vale anche se la pagina è abbassata e i timer sono fermi)
+        if (!fermato) { fermaTutto(); chiudi(); }
+      });
       media.addEventListener('pause', () => {
         if (fermato || media.ended) return;
         mediaVa = false; aggiornaStato();
@@ -320,8 +323,10 @@
 
   // Mai chiudere la pagina mentre è abbassata (chiudeva anche la chat/Telegram): si chiude quando torna visibile.
   let daChiudere = false;
+  // Dal 20/11 sera si chiude ANCHE abbassata (il titolare vuole che la barretta sotto la chat sparisca da sola a fine
+  // recupero); se Telegram non la chiude mentre è abbassata, ci si riprova appena torna visibile.
   function chiudi() {
-    if (document.visibilityState !== 'visible') { daChiudere = true; return; }
+    if (document.visibilityState !== 'visible') daChiudere = true;
     try { if (tg && tg.close) tg.close(); } catch (e) {}
   }
 
