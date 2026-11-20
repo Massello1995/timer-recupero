@@ -6,8 +6,9 @@
 <meta name="robots" content="noindex">
 <title>Timer recupero</title>
 <!-- Pagina del timer di recupero aperta dal bot Telegram (Mini App). Non contiene dati. Riceve dal tasto la durata (sec),
-     un codice a caso (k) e l'indirizzo del "postino" (t, su ntfy.sh). Avvisa il gestionale con due soli biglietti:
-     «avvio» (aperta da Avvia recupero) e «suonato» (a fine recupero ha suonato). Nessuna richiesta verso il gestionale. -->
+     un codice a caso (k) e l'indirizzo del "postino" (t, su ntfy.sh). Biglietti al gestionale: «avvio» (aperta da Avvia
+     recupero), «pronta» (sveglia programmata: il bot non manda messaggi), «suonato», «fine» (viva ma senza suono),
+     «ferma» e «chiusa» (chiusa prima della sveglia: squilla il bot). Nessuna richiesta verso il gestionale. -->
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
 <style>
   :root {
@@ -73,7 +74,7 @@
 
 <footer>
   <button id="fermo" type="button">Ferma</button>
-  <p class="nota" id="nota">Abbassala con la freccia in alto o strisciando verso il basso. «Ferma» ferma il recupero e la chiude.</p>
+  <p class="nota" id="nota">Abbassala strisciando verso il basso la barra in alto: suona lo stesso. «Ferma» ferma il recupero e la chiude.</p>
 </footer>
 <div class="sr" aria-live="assertive" id="annuncio"></div>
 
@@ -95,13 +96,22 @@
       if (tg.disableVerticalSwipes) tg.disableVerticalSwipes();  // una strisciata non chiude la pagina per sbaglio
       if (tg.setHeaderColor) tg.setHeaderColor('#1d2024');
       if (tg.setBackgroundColor) tg.setBackgroundColor('#1d2024');
+      // In alto a sinistra niente «X»: con il tasto Indietro mostrato Telegram mette la freccia al posto della X.
+      // La freccia non chiude: ricorda solo come abbassare la pagina. Si chiude solo con «Ferma».
+      if (tg.BackButton) { tg.BackButton.show(); tg.BackButton.onClick(() => { vibra(false); evidenziaNota(); }); }
     }
   } catch (e) {}
 
   const adesso = Date.now();
   let fine;
-  if (q.get('avvio')) fine = adesso + sec * 1000;          // aperta da «Avvia recupero»: si parte adesso
+  const memo = 'timer_' + (q.get('k') || '');
+  let ricordata = 0;
+  try { ricordata = parseInt(localStorage.getItem(memo), 10) || 0; } catch (e) {}
+  if (q.get('avvio') && ricordata && ricordata > adesso - 60000) fine = ricordata;  // Telegram ha ricaricato la pagina: non si riparte da capo
+  else if (q.get('avvio')) fine = adesso + sec * 1000;     // aperta da «Avvia recupero»: si parte adesso
   else fine = parseInt(q.get('fine'), 10) || 0;            // riaperta: l'ora di fine la dice il bot
+  try { if (q.get('k') && fine) localStorage.setItem(memo, String(fine)); } catch (e) {}
+  const ricaricata = !!(q.get('avvio') && ricordata && fine === ricordata);
   if (!q.get('sec') || !fine) {
     $('tempo').textContent = '--:--';
     $('sotto').textContent = 'Apri il timer dal tasto del bot';
@@ -161,11 +171,17 @@
     return o;
   }
 
-  function sveglia(tra) {  // circa 5 secondi di "bip-bip-bip" forte (2/3 di prima), tra "tra" secondi
+  function sveglia(tra) {  // circa 4 secondi di "bip-bip-bip" forte (dal 20/11 pomeriggio, prima 5,3), tra "tra" secondi
     const l = [];
-    for (let i = 0; i < 5; i++) l.push(bip(1046, 0.16, 0.9, (tra || 0) + i), bip(1318, 0.16, 0.9, (tra || 0) + i + 0.22), bip(1046, 0.16, 0.9, (tra || 0) + i + 0.44));
-    l.push(bip(1046, 0.16, 0.9, (tra || 0) + 5));  // ultimo bip: in tutto circa 5,3 secondi
+    for (let i = 0; i < 4; i++) l.push(bip(1046, 0.16, 0.9, (tra || 0) + i), bip(1318, 0.16, 0.9, (tra || 0) + i + 0.22), bip(1046, 0.16, 0.9, (tra || 0) + i + 0.44));
     return l.filter(Boolean);
+  }
+
+  function evidenziaNota() {
+    const n = $('nota');
+    n.textContent = 'Per abbassarla: striscia verso il basso la barra in alto. Per chiuderla: «Ferma».';
+    n.style.color = '#fff';
+    setTimeout(() => { n.style.color = ''; }, 2500);
   }
 
   // La sveglia si programma nel motore audio all'ora di fine: se abbassi la pagina dentro Telegram e il telefono la tiene viva, suona lo stesso.
@@ -175,6 +191,7 @@
     if (tra <= 0.3) return;
     oraSveglia = audio.currentTime + tra;
     programmati = sveglia(tra);
+    if (programmati.length) biglietto('pronta');  // la sveglia è pronta nel motore audio: il bot non deve mandare messaggi
   }
   function togliProgrammati() { programmati.forEach(o => { try { o.stop(); } catch (e) {} }); programmati = []; }
 
@@ -199,7 +216,10 @@
   }
   ['pointerdown', 'touchstart', 'keydown'].forEach(ev => document.addEventListener(ev, () => { sblocca(); tieniAcceso(); }, { passive: true }));
 
+  // Mai chiudere la pagina mentre è abbassata (chiudeva anche la chat/Telegram): si chiude quando torna visibile.
+  let daChiudere = false;
   function chiudi() {
+    if (document.visibilityState !== 'visible') { daChiudere = true; return; }
     try { if (tg && tg.close) tg.close(); } catch (e) {}
   }
 
@@ -253,15 +273,25 @@
   }
 
   $('fermo').onclick = ferma;
+  // Pagina chiusa (X della barretta, menu di Telegram) prima della sveglia: il bot squilla lui.
+  window.addEventListener('pagehide', () => {
+    if (fermato || suonato || !k || !topic) return;
+    try {
+      const corpo = JSON.stringify({ k, e: 'chiusa', audio: audio ? audio.state : 'nessuno', vis: document.visibilityState });
+      if (!(navigator.sendBeacon && navigator.sendBeacon(`${server}/${encodeURIComponent(topic)}`, corpo)))
+        fetch(`${server}/${encodeURIComponent(topic)}`, { method: 'POST', body: corpo, keepalive: true });
+    } catch (e) {}
+  });
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState !== 'visible') return;
+    if (daChiudere) { setTimeout(chiudi, 400); return; }
     tieniAcceso();
     if (programmati.length && audio && audio.currentTime < oraSveglia && Date.now() > fine + 5000) togliProgrammati();
     if (audio && audio.state === 'suspended' && !fermato) audio.resume().then(aggiornaStato).catch(() => {});
   });
 
   // «avvio» dopo aver provato ad accendere il suono (al massimo 0,8 s: senza permesso il telefono può non rispondere mai)
-  Promise.race([sblocca(), new Promise(r => setTimeout(r, 800))]).then(() => { if (q.get('avvio') && !giaFinito) biglietto('avvio'); });
+  Promise.race([sblocca(), new Promise(r => setTimeout(r, 800))]).then(() => { if (q.get('avvio') && !giaFinito && !ricaricata) biglietto('avvio'); });
   tieniAcceso();
   setTimeout(aggiornaStato, 600);
   if (giaFinito) { finito(); $('sotto').textContent = 'Il recupero era già finito'; }
