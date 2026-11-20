@@ -87,6 +87,7 @@
   const k = q.get('k') || '', topic = q.get('t') || '';
   const server = (q.get('s') || 'https://ntfy.sh').replace(/\/+$/, '');
   const GIRO = 282.74;
+  const VERSIONE = '20nov-1540';  // finisce nel registro del gestionale: si vede quale pagina ha usato il telefono
   let audio = null, wake = null, suonato = false, fermato = false, lampo = null;
   let programmati = [], oraSveglia = 0;
 
@@ -125,7 +126,7 @@
   async function biglietto(e) {
     if (!k || !topic) return false;
     // con il biglietto va anche un controllo: la pagina ha il suono? è visibile o abbassata?
-    const corpo = JSON.stringify({ k, e, audio: mediaVa ? 'file' : audio ? audio.state : 'nessuno', vis: document.visibilityState });
+    const corpo = JSON.stringify({ k, e, v: VERSIONE, audio: mediaVa ? 'file' : audio ? audio.state : 'nessuno', vis: document.visibilityState });
     for (let i = 0; i < 3; i++) {
       try {
         const ctl = new AbortController(), stop = setTimeout(() => ctl.abort(), 3000);
@@ -356,7 +357,13 @@
     $('tempo').textContent = 'Prossima serie!';
     $('sotto').textContent = '';
     $('pieno').style.strokeDashoffset = GIRO;
-    if (suonato || giaFinito || Date.now() - fine >= 5000) return;  // tornato sulla pagina molto dopo: niente sveglia in ritardo
+    if (suonato || giaFinito || Date.now() - fine >= 5000) {  // risvegliata molto dopo la fine: niente sveglia in ritardo, si chiude
+      if (!giaFinito && !fermato) {
+        if (!suonato) biglietto(suonaOk() ? 'suonato' : 'fine');
+        suonato = true; fermaTutto(); chiudi();
+      }
+      return;
+    }
     suonato = true;
     annuncia('Recupero finito: prossima serie');
     const sento = suonaOk();
@@ -364,7 +371,11 @@
     else if (sento && !programmati.length) programmati = sveglia(0);  // se era già programmata sta suonando da sola
     if (!sento && audio) audio.resume().then(() => { if (!fermato && audio.state === 'running') { togliProgrammati(); programmati = sveglia(0); } }).catch(() => {});
     biglietto(sento ? 'suonato' : 'fine');  // «suonato»: il bot non manda i suoi messaggi; «fine»: solo il controllo
-    setTimeout(() => { if (!fermato) { fermaTutto(); chiudi(); } }, 6000);  // dopo la sveglia la pagina si chiude da sola
+    // Dopo la sveglia (4 s) la pagina si chiude da sola. Abbassata, Telegram la tiene ferma e la risveglia solo per un
+    // attimo (registro 20/11: «suonato» arrivato 6 s dopo la fine): se la sveglia è già passata si chiude SUBITO.
+    const chiudiTra = fine + 4500 - Date.now();
+    if (chiudiTra <= 0) { fermaTutto(); chiudi(); }
+    else setTimeout(() => { if (!fermato) { fermaTutto(); chiudi(); } }, chiudiTra);
     let n = 0;
     lampo = setInterval(() => {
       if (fermato || n++ > 15) { clearInterval(lampo); lampo = null; document.body.classList.remove('lampo'); return; }
