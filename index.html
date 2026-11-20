@@ -5,8 +5,9 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="robots" content="noindex">
 <title>Timer recupero</title>
-<!-- Pagina del timer di recupero aperta dal bot Telegram (Mini App). Non contiene dati: riceve solo l'ora di fine
-     (?fine=millisecondi&sec=durata) calcolata dal gestionale e suona a fine recupero. Nessuna richiesta verso il gestionale. -->
+<!-- Pagina del timer di recupero aperta dal bot Telegram (Mini App). Non contiene dati. Riceve dal tasto la durata (sec),
+     un codice a caso (k) e l'indirizzo del "postino" (t, su ntfy.sh). Avvisa il gestionale con due soli biglietti:
+     «avvio» (aperta da Avvia recupero) e «suonato» (a fine recupero ha suonato). Nessuna richiesta verso il gestionale. -->
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
 <style>
   :root {
@@ -15,7 +16,7 @@
     --font: "Barlow", "Segoe UI", system-ui, -apple-system, Roboto, sans-serif;
   }
   * { box-sizing: border-box; }
-  html, body { margin: 0; height: 100%; }
+  html, body { margin: 0; height: 100%; overflow-x: hidden; }
   body {
     background: var(--canvas); color: var(--testo); font-family: var(--font);
     display: flex; flex-direction: column; align-items: center; justify-content: space-between;
@@ -28,10 +29,10 @@
   @media (prefers-reduced-motion: reduce) { body, body.fine.lampo { transition: none; } body.fine.lampo { background: var(--rosso-scuro); } }
   header { text-align: center; width: 100%; }
   .titolo { font-size: 18px; font-weight: 600; letter-spacing: .02em; color: var(--muto); margin: 4px 0 0; }
-  .stato { display: inline-flex; align-items: center; gap: 8px; margin-top: 10px; padding: 8px 14px; border-radius: 999px;
-           font-size: 15px; font-weight: 600; background: var(--scheda); border: 1px solid var(--bordo); color: var(--muto); }
+  .stato { display: inline-flex; align-items: center; gap: 8px; margin-top: 10px; padding: 7px 13px; border-radius: 999px;
+           font-size: 14px; font-weight: 600; background: var(--scheda); border: 1px solid var(--bordo); color: var(--muto); }
   .stato.on { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 45%, transparent); }
-  .stato svg { width: 18px; height: 18px; flex: none; }
+  .stato svg { width: 17px; height: 17px; flex: none; }
   main { position: relative; width: min(88vw, 62dvh, 420px); aspect-ratio: 1; display: grid; place-items: center; }
   main svg.anello { position: absolute; inset: 0; width: 100%; height: 100%; transform: rotate(-90deg); }
   .anello circle { fill: none; stroke-width: 7; }
@@ -41,21 +42,14 @@
   .tempo { font-variant-numeric: tabular-nums; font-weight: 700; font-size: min(24vw, 15dvh, 120px); line-height: 1; letter-spacing: -.02em; }
   .sotto { position: absolute; bottom: 22%; font-size: 17px; color: var(--muto); font-weight: 500; text-align: center; padding: 0 12%; }
   body.fine .tempo { font-size: min(11vw, 8dvh, 56px); text-align: center; max-width: 78%; line-height: 1.1; overflow-wrap: anywhere; }
-  html, body { overflow-x: hidden; }
   footer { width: 100%; max-width: 420px; display: grid; gap: 10px; }
-  button { font: inherit; font-size: 18px; font-weight: 700; min-height: 56px; border-radius: 14px; border: 0; cursor: pointer; width: 100%; }
+  button { font: inherit; font-size: 18px; font-weight: 700; min-height: 56px; border-radius: 14px; border: 0; cursor: pointer; width: 100%;
+           background: #fff; color: #1d2024; }
+  button[hidden] { display: none; }
   button:focus-visible { outline: 3px solid #fff; outline-offset: 3px; }
-  .primario { background: var(--rosso); color: #fff; }
-  .primario:active { filter: brightness(1.12); }
-  body.fine .primario { background: #fff; color: #1d2024; }
-  body.fine .nota, body.fine .titolo { color: #f3d6da; }
-  .secondario { background: var(--scheda); color: var(--testo); border: 1px solid var(--bordo); }
+  button:active { filter: brightness(.92); }
   .nota { font-size: 14px; color: var(--muto); text-align: center; line-height: 1.45; margin: 2px 4px 0; }
-  .velo { position: fixed; inset: 0; background: rgb(15 17 20 / .86); display: grid; place-items: center; padding: 24px; z-index: 5; }
-  .velo[hidden] { display: none; }
-  .velo .box { max-width: 360px; text-align: center; }
-  .velo .grande { font-size: 22px; font-weight: 700; margin: 0 0 10px; }
-  .velo p { color: var(--muto); font-size: 16px; line-height: 1.5; margin: 0 0 18px; }
+  body.fine .nota, body.fine .titolo { color: #f3d6da; }
   .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 </style>
 </head>
@@ -64,7 +58,7 @@
   <p class="titolo">Recupero</p>
   <span class="stato" id="stato" role="status">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M11 5 6 9H2v6h4l5 4V5z"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"/></svg>
-    <span id="statoTesto">Sveglia non attiva</span>
+    <span id="statoTesto">Sveglia…</span>
   </span>
 </header>
 
@@ -78,17 +72,9 @@
 </main>
 
 <footer>
-  <button class="primario" id="azione" type="button">Chiudi</button>
-  <p class="nota" id="nota">Tieni questa pagina aperta: a fine recupero suona forte e vibra. Se chiudi la pagina o spegni lo schermo, ti avvisa il bot (con la suoneria accesa nelle Opzioni).</p>
+  <button id="fermo" type="button" hidden>Fermo</button>
+  <p class="nota" id="nota">Per chiudere usa la X in alto. Se chiudi prima della fine, ti avvisa il bot.</p>
 </footer>
-
-<div class="velo" id="velo">
-  <div class="box">
-    <p class="grande">Tocca per attivare la sveglia</p>
-    <p>Il telefono permette il suono solo dopo un tocco. Alza il volume dei media (quello di musica e video).</p>
-    <button class="primario" id="attiva" type="button">Attiva la sveglia</button>
-  </div>
-</div>
 <div class="sr" aria-live="assertive" id="annuncio"></div>
 
 <script>
@@ -97,10 +83,11 @@
   const $ = id => document.getElementById(id);
   const q = new URLSearchParams(location.search);
   const sec = Math.max(1, Math.min(3600, parseInt(q.get('sec'), 10) || 0));
-  let fine = parseInt(q.get('fine'), 10) || 0;
+  const k = q.get('k') || '', topic = q.get('t') || '';
+  const server = (q.get('s') || 'https://ntfy.sh').replace(/\/+$/, '');
   const GIRO = 282.74;
-  let audio = null, wake = null, suonato = false, fermato = false, ultimoBip = -1;
-  let programmati = [], oraSveglia = 0;  // sveglia già programmata nel motore audio (suona anche con la pagina abbassata)
+  let audio = null, wake = null, suonato = false, fermato = false, lampo = null;
+  let programmati = [], oraSveglia = 0;
 
   try {
     if (tg) {
@@ -111,29 +98,46 @@
     }
   } catch (e) {}
 
-  // l'orologio del telefono può essere un po' diverso da quello del PC: il recupero non dura mai più di "sec"
   const adesso = Date.now();
-  if (!fine || !q.get('sec')) {
+  let fine;
+  if (q.get('avvio')) fine = adesso + sec * 1000;          // aperta da «Avvia recupero»: si parte adesso
+  else fine = parseInt(q.get('fine'), 10) || 0;            // riaperta: l'ora di fine la dice il bot
+  if (!q.get('sec') || !fine) {
     $('tempo').textContent = '--:--';
     $('sotto').textContent = 'Apri il timer dal tasto del bot';
-    $('velo').hidden = true;
-    $('nota').hidden = true;
-    $('azione').onclick = chiudi;
+    $('stato').hidden = true; $('nota').hidden = true;
     return;
   }
-  if (fine - adesso > sec * 1000 + 2000) fine = adesso + sec * 1000;
-  const giaFinito = fine - adesso < -5000;  // aperta tardi: niente sveglia
+  if (fine - adesso > sec * 1000 + 2000) fine = adesso + sec * 1000;  // orologio del telefono diverso da quello del PC
+  const giaFinito = fine - adesso < -5000;
+
+  // ---- postino (ntfy.sh): un biglietto solo; se non passa, al massimo 3 tentativi ----
+  async function biglietto(e) {
+    if (!k || !topic) return false;
+    for (let i = 0; i < 3; i++) {
+      try {
+        const ctl = new AbortController(), stop = setTimeout(() => ctl.abort(), 3000);
+        const r = await fetch(`${server}/${encodeURIComponent(topic)}`, { method: 'POST', body: JSON.stringify({ k, e }), keepalive: true, signal: ctl.signal });
+        clearTimeout(stop);
+        if (r.ok) return true;
+      } catch (err) {}
+      await new Promise(r => setTimeout(r, 400 * (i + 1)));
+    }
+    return false;
+  }
+  if (q.get('avvio') && !giaFinito) biglietto('avvio');
 
   const mmss = ms => { const s = Math.max(0, Math.ceil(ms / 1000)); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`; };
   const annuncia = t => { $('annuncio').textContent = ''; setTimeout(() => { $('annuncio').textContent = t; }, 50); };
+  const suonaOk = () => !!(audio && audio.state === 'running');
 
-  function vibra(tipo) {
-    try { if (tg && tg.HapticFeedback) { tipo === 'forte' ? tg.HapticFeedback.notificationOccurred('warning') : tg.HapticFeedback.impactOccurred('light'); } } catch (e) {}
-    try { if (navigator.vibrate) navigator.vibrate(tipo === 'forte' ? [400, 150, 400, 150, 400] : 60); } catch (e) {}
+  function vibra(forte) {
+    try { if (tg && tg.HapticFeedback) { forte ? tg.HapticFeedback.notificationOccurred('warning') : tg.HapticFeedback.impactOccurred('light'); } } catch (e) {}
+    try { if (navigator.vibrate) navigator.vibrate(forte ? [400, 150, 400, 150, 400] : 60); } catch (e) {}
   }
 
   function bip(freq, dur, vol, quando) {
-    if (!audio) return;
+    if (!audio) return null;
     const t0 = audio.currentTime + (quando || 0);
     const o = audio.createOscillator(), g = audio.createGain();
     o.type = 'square'; o.frequency.value = freq;
@@ -146,55 +150,53 @@
     return o;
   }
 
-  function sveglia(tra) {  // circa 8 secondi di "bip-bip-bip" forte, tra "tra" secondi; -> i suoni programmati
+  function sveglia(tra) {  // circa 5 secondi di "bip-bip-bip" forte (2/3 di prima), tra "tra" secondi
     const l = [];
-    for (let i = 0; i < 8; i++) {
-      l.push(bip(1046, 0.16, 0.9, (tra || 0) + i), bip(1318, 0.16, 0.9, (tra || 0) + i + 0.22), bip(1046, 0.16, 0.9, (tra || 0) + i + 0.44));
-    }
+    for (let i = 0; i < 5; i++) l.push(bip(1046, 0.16, 0.9, (tra || 0) + i), bip(1318, 0.16, 0.9, (tra || 0) + i + 0.22), bip(1046, 0.16, 0.9, (tra || 0) + i + 0.44));
+    l.push(bip(1046, 0.16, 0.9, (tra || 0) + 5));  // ultimo bip: in tutto circa 5,3 secondi
     return l.filter(Boolean);
   }
 
-  // Appena la sveglia è attiva si programma già nel motore audio all'ora di fine: se abbassi la pagina dentro Telegram
-  // (strisciata verso il basso) e il telefono la lascia viva, suona lo stesso. A schermo spento o in un'altra app di solito
-  // il telefono la ferma: lì avvisano i messaggi del bot.
+  // La sveglia si programma nel motore audio all'ora di fine: se abbassi la pagina dentro Telegram e il telefono la tiene viva, suona lo stesso.
   function programma() {
-    if (!audio || programmati.length) return;
+    if (!suonaOk() || programmati.length || suonato) return;
     const tra = (fine - Date.now()) / 1000;
     if (tra <= 0.3) return;
     oraSveglia = audio.currentTime + tra;
     programmati = sveglia(tra);
   }
+  function togliProgrammati() { programmati.forEach(o => { try { o.stop(); } catch (e) {} }); programmati = []; }
 
-  function togliProgrammati() {
-    programmati.forEach(o => { try { o.stop(); } catch (e) {} });
-    programmati = [];
+  function aggiornaStato() {
+    const ok = suonaOk();
+    $('stato').classList.toggle('on', ok);
+    $('statoTesto').textContent = ok ? 'Sveglia pronta' : 'Tocca lo schermo per il suono';
   }
 
-  async function attiva() {
+  // Il suono parte da solo se il telefono lo permette; se no basta un tocco qualsiasi sulla pagina (nessun riquadro da toccare).
+  async function sblocca() {
     try {
       const AC = window.AudioContext || window.webkitAudioContext;
       if (AC && !audio) audio = new AC();
       if (audio && audio.state === 'suspended') await audio.resume();
-      bip(880, 0.08, 0.25, 0);  // piccolo bip di prova: la sveglia è pronta
     } catch (e) {}
-    await tieniAcceso();
-    $('velo').hidden = true;
+    aggiornaStato();
     programma();
-    const ok = audio && audio.state === 'running';
-    $('stato').classList.toggle('on', !!ok);
-    $('statoTesto').textContent = ok ? 'Sveglia attiva' : 'Suono non disponibile: resta la vibrazione';
-    vibra('leggera');
   }
-
   async function tieniAcceso() {
     try { if ('wakeLock' in navigator && !wake) { wake = await navigator.wakeLock.request('screen'); wake.addEventListener('release', () => { wake = null; }); } } catch (e) {}
   }
+  ['pointerdown', 'touchstart', 'keydown'].forEach(ev => document.addEventListener(ev, () => { sblocca(); tieniAcceso(); }, { passive: true }));
 
-  function chiudi() {
+  function fermaTutto() {
     fermato = true;
     togliProgrammati();
-    try { if (audio) audio.close(); } catch (e) {}
-    if (tg && tg.close) tg.close(); else window.close();
+    if (lampo) { clearInterval(lampo); lampo = null; }
+    document.body.classList.remove('lampo');
+    try { if (audio) audio.suspend(); } catch (e) {}
+    try { if (navigator.vibrate) navigator.vibrate(0); } catch (e) {}
+    $('fermo').hidden = true;
+    $('sotto').textContent = 'Sveglia fermata';
   }
 
   function finito() {
@@ -202,18 +204,21 @@
     $('tempo').textContent = 'Prossima serie!';
     $('sotto').textContent = '';
     $('pieno').style.strokeDashoffset = GIRO;
-    $('azione').textContent = 'Fermo, chiudi';
-    if (!suonato && !giaFinito && Date.now() - fine < 5000) {  // tornato sulla pagina molto dopo la fine: niente sveglia in ritardo
-      suonato = true;
-      annuncia('Recupero finito: prossima serie');
-      if (!programmati.length) sveglia();  // già programmata: sta suonando da sola
-      let n = 0;
-      const lampo = setInterval(() => {
-        if (fermato || n++ > 15) { clearInterval(lampo); document.body.classList.remove('lampo'); return; }
-        document.body.classList.toggle('lampo');
-        if (n % 2) vibra('forte');
-      }, 500);
+    if (suonato || giaFinito || Date.now() - fine >= 5000) return;  // tornato sulla pagina molto dopo: niente sveglia in ritardo
+    suonato = true;
+    annuncia('Recupero finito: prossima serie');
+    const sento = suonaOk();
+    if (sento) {
+      if (!programmati.length) programmati = sveglia(0);  // se era già programmata sta suonando da sola
+      biglietto('suonato');  // il bot non manda i suoi messaggi
     }
+    $('fermo').hidden = false;
+    let n = 0;
+    lampo = setInterval(() => {
+      if (fermato || n++ > 15) { clearInterval(lampo); lampo = null; document.body.classList.remove('lampo'); return; }
+      document.body.classList.toggle('lampo');
+      if (n % 2) vibra(true);
+    }, 500);
   }
 
   function giro() {
@@ -222,22 +227,21 @@
     if (resto <= 0) { finito(); return; }
     $('tempo').textContent = mmss(resto);
     $('pieno').style.strokeDashoffset = GIRO * (1 - Math.min(1, resto / (sec * 1000)));
-    const s = Math.ceil(resto / 1000);
-    if (s <= 3 && s !== ultimoBip) { ultimoBip = s; bip(660, 0.12, 0.5, 0); vibra('leggera'); }  // 3, 2, 1
-    $('sotto').textContent = s <= 10 ? 'Preparati' : `di ${mmss(sec * 1000)}`;
+    $('sotto').textContent = resto <= 10000 ? 'Preparati' : `di ${mmss(sec * 1000)}`;
     setTimeout(giro, Math.min(250, resto));
   }
 
-  $('attiva').onclick = attiva;
-  $('azione').onclick = chiudi;
+  $('fermo').onclick = fermaTutto;
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState !== 'visible') return;
     tieniAcceso();
-    // il telefono aveva fermato l'audio e il recupero è finito da più di 5 secondi: niente sveglia in ritardo
     if (programmati.length && audio && audio.currentTime < oraSveglia && Date.now() > fine + 5000) togliProgrammati();
-    if (audio && audio.state === 'suspended') audio.resume();
+    if (audio && audio.state === 'suspended' && !fermato) audio.resume().then(aggiornaStato).catch(() => {});
   });
-  if (giaFinito) { $('velo').hidden = true; finito(); $('sotto').textContent = 'Il recupero era già finito'; }
+
+  sblocca(); tieniAcceso();
+  setTimeout(aggiornaStato, 600);
+  if (giaFinito) { finito(); $('sotto').textContent = 'Il recupero era già finito'; }
   else giro();
 })();
 </script>
