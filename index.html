@@ -87,14 +87,14 @@
   const k = q.get('k') || '', topic = q.get('t') || '';
   const server = (q.get('s') || 'https://ntfy.sh').replace(/\/+$/, '');
   const GIRO = 282.74;
-  const VERSIONE = '20nov-1550';  // finisce nel registro del gestionale: si vede quale pagina ha usato il telefono
+  const VERSIONE = '20nov-1600';  // finisce nel registro del gestionale: si vede quale pagina ha usato il telefono
   let audio = null, wake = null, suonato = false, fermato = false, lampo = null;
   let programmati = [], oraSveglia = 0;
 
   try {
     if (tg) {
       tg.ready(); tg.expand();
-      if (tg.disableVerticalSwipes) tg.disableVerticalSwipes();  // una strisciata non chiude la pagina per sbaglio
+      if (tg.enableVerticalSwipes) tg.enableVerticalSwipes();  // strisciando verso il basso la pagina si abbassa (20/11: bloccarlo impediva di abbassarla)
       if (tg.setHeaderColor) tg.setHeaderColor('#1d2024');
       if (tg.setBackgroundColor) tg.setBackgroundColor('#1d2024');
       // In alto a sinistra niente «X»: con il tasto Indietro mostrato Telegram mette la freccia al posto della X.
