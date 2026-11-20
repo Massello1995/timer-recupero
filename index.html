@@ -72,8 +72,8 @@
 </main>
 
 <footer>
-  <button id="fermo" type="button" hidden>Fermo</button>
-  <p class="nota" id="nota">Per chiudere usa la X in alto. Se chiudi prima della fine, ti avvisa il bot.</p>
+  <button id="fermo" type="button">Ferma</button>
+  <p class="nota" id="nota">Abbassala con la freccia in alto o strisciando verso il basso. «Ferma» ferma il recupero e la chiude.</p>
 </footer>
 <div class="sr" aria-live="assertive" id="annuncio"></div>
 
@@ -114,10 +114,12 @@
   // ---- postino (ntfy.sh): un biglietto solo; se non passa, al massimo 3 tentativi ----
   async function biglietto(e) {
     if (!k || !topic) return false;
+    // con il biglietto va anche un controllo: la pagina ha il suono? è visibile o abbassata?
+    const corpo = JSON.stringify({ k, e, audio: audio ? audio.state : 'nessuno', vis: document.visibilityState });
     for (let i = 0; i < 3; i++) {
       try {
         const ctl = new AbortController(), stop = setTimeout(() => ctl.abort(), 3000);
-        const r = await fetch(`${server}/${encodeURIComponent(topic)}`, { method: 'POST', body: JSON.stringify({ k, e }), keepalive: true, signal: ctl.signal });
+        const r = await fetch(`${server}/${encodeURIComponent(topic)}`, { method: 'POST', body: corpo, keepalive: true, signal: ctl.signal });
         clearTimeout(stop);
         if (r.ok) return true;
       } catch (err) {}
@@ -125,7 +127,16 @@
     }
     return false;
   }
-  if (q.get('avvio') && !giaFinito) biglietto('avvio');
+
+  // Il bot ha fermato il recupero (⏹ ferma): biglietto «stop» con il nostro codice -> la pagina si ferma e si chiude.
+  try {
+    if (k && topic && window.EventSource) {
+      const es = new EventSource(`${server}/${encodeURIComponent(topic)}/sse`);
+      es.onmessage = ev => {
+        try { const m = JSON.parse(JSON.parse(ev.data).message || '{}'); if (m.k === k && m.e === 'stop') { es.close(); fermaTutto(); chiudi(); } } catch (err) {}
+      };
+    }
+  } catch (e) {}
 
   const mmss = ms => { const s = Math.max(0, Math.ceil(ms / 1000)); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`; };
   const annuncia = t => { $('annuncio').textContent = ''; setTimeout(() => { $('annuncio').textContent = t; }, 50); };
@@ -188,6 +199,18 @@
   }
   ['pointerdown', 'touchstart', 'keydown'].forEach(ev => document.addEventListener(ev, () => { sblocca(); tieniAcceso(); }, { passive: true }));
 
+  function chiudi() {
+    try { if (tg && tg.close) tg.close(); } catch (e) {}
+  }
+
+  // «Ferma»: prima della fine ferma anche il recupero del bot (biglietto «ferma»), poi la pagina si chiude.
+  async function ferma() {
+    const prima = !suonato && Date.now() < fine;
+    fermaTutto();
+    if (prima) await biglietto('ferma');
+    chiudi();
+  }
+
   function fermaTutto() {
     fermato = true;
     togliProgrammati();
@@ -208,11 +231,9 @@
     suonato = true;
     annuncia('Recupero finito: prossima serie');
     const sento = suonaOk();
-    if (sento) {
-      if (!programmati.length) programmati = sveglia(0);  // se era già programmata sta suonando da sola
-      biglietto('suonato');  // il bot non manda i suoi messaggi
-    }
-    $('fermo').hidden = false;
+    if (sento && !programmati.length) programmati = sveglia(0);  // se era già programmata sta suonando da sola
+    biglietto(sento ? 'suonato' : 'fine');  // «suonato»: il bot non manda i suoi messaggi; «fine»: solo il controllo
+    setTimeout(() => { if (!fermato) { fermaTutto(); chiudi(); } }, 6000);  // dopo la sveglia la pagina si chiude da sola
     let n = 0;
     lampo = setInterval(() => {
       if (fermato || n++ > 15) { clearInterval(lampo); lampo = null; document.body.classList.remove('lampo'); return; }
@@ -231,7 +252,7 @@
     setTimeout(giro, Math.min(250, resto));
   }
 
-  $('fermo').onclick = fermaTutto;
+  $('fermo').onclick = ferma;
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState !== 'visible') return;
     tieniAcceso();
@@ -239,7 +260,9 @@
     if (audio && audio.state === 'suspended' && !fermato) audio.resume().then(aggiornaStato).catch(() => {});
   });
 
-  sblocca(); tieniAcceso();
+  // «avvio» dopo aver provato ad accendere il suono (al massimo 0,8 s: senza permesso il telefono può non rispondere mai)
+  Promise.race([sblocca(), new Promise(r => setTimeout(r, 800))]).then(() => { if (q.get('avvio') && !giaFinito) biglietto('avvio'); });
+  tieniAcceso();
   setTimeout(aggiornaStato, 600);
   if (giaFinito) { finito(); $('sotto').textContent = 'Il recupero era già finito'; }
   else giro();
