@@ -87,7 +87,7 @@
   const k = q.get('k') || '', topic = q.get('t') || '';
   const server = (q.get('s') || 'https://ntfy.sh').replace(/\/+$/, '');
   const GIRO = 282.74;
-  const VERSIONE = '20nov-1540';  // finisce nel registro del gestionale: si vede quale pagina ha usato il telefono
+  const VERSIONE = '20nov-1550';  // finisce nel registro del gestionale: si vede quale pagina ha usato il telefono
   let audio = null, wake = null, suonato = false, fermato = false, lampo = null;
   let programmati = [], oraSveglia = 0;
 
@@ -208,6 +208,7 @@
     if (tra <= 0.3) return;
     oraSveglia = audio.currentTime + tra;
     programmati = sveglia(tra);
+    chiudiAllaFineSuono(programmati);
     if (programmati.length) biglietto('pronta');  // la sveglia è pronta nel motore audio: il bot non deve mandare messaggi
   }
   function togliProgrammati() { programmati.forEach(o => { try { o.stop(); } catch (e) {} }); programmati = []; }
@@ -326,9 +327,15 @@
   let daChiudere = false;
   // Dal 20/11 sera si chiude ANCHE abbassata (il titolare vuole che la barretta sotto la chat sparisca da sola a fine
   // recupero); se Telegram non la chiude mentre è abbassata, ci si riprova appena torna visibile.
+  let chiusuraDetta = false;
   function chiudi() {
     if (document.visibilityState !== 'visible') daChiudere = true;
+    if (!chiusuraDetta) { chiusuraDetta = true; biglietto('chiudo'); }  // nel registro: la pagina ha provato a chiudersi
     try { if (tg && tg.close) tg.close(); } catch (e) {}
+  }
+  function chiudiAllaFineSuono(nodi) {  // la fine dell'ultimo suono sveglia la pagina anche abbassata: lì si chiude
+    const ultimo = nodi && nodi[nodi.length - 1];
+    if (ultimo) ultimo.onended = () => { if (!fermato && Date.now() >= fine) { fermaTutto(); chiudi(); } };
   }
 
   // «Ferma»: prima della fine ferma anche il recupero del bot (biglietto «ferma»), poi la pagina si chiude.
@@ -368,7 +375,7 @@
     annuncia('Recupero finito: prossima serie');
     const sento = suonaOk();
     if (mediaVa) riallinea();  // il file suona da solo la sveglia (che è già nel file all'ora di fine)
-    else if (sento && !programmati.length) programmati = sveglia(0);  // se era già programmata sta suonando da sola
+    else if (sento && !programmati.length) { programmati = sveglia(0); chiudiAllaFineSuono(programmati); }  // se era già programmata sta suonando da sola
     if (!sento && audio) audio.resume().then(() => { if (!fermato && audio.state === 'running') { togliProgrammati(); programmati = sveglia(0); } }).catch(() => {});
     biglietto(sento ? 'suonato' : 'fine');  // «suonato»: il bot non manda i suoi messaggi; «fine»: solo il controllo
     // Dopo la sveglia (4 s) la pagina si chiude da sola. Abbassata, Telegram la tiene ferma e la risveglia solo per un
