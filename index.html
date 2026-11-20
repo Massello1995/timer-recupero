@@ -19,11 +19,12 @@
   * { box-sizing: border-box; }
   /* La pagina è alta ESATTAMENTE quanto lo schermo e non scorre mai: così ogni strisciata verso il basso, in qualsiasi
      punto (anche sul cronometro), va a Telegram che abbassa la pagina, invece di far scorrere la pagina di qualche pixel. */
-  html, body { margin: 0; height: 100%; overflow: hidden; }
+  /* Altezza = finestra vera (100%), non il valore di Telegram che si aggiorna in ritardo mentre la pagina si apre o si
+     allarga (metà schermo restava scoperta e sembrava oscurata). Anche lo sfondo sotto è dello stesso colore. */
+  html, body { margin: 0; height: 100%; overflow: hidden; background: var(--canvas); }
   body {
     background: var(--canvas); color: var(--testo); font-family: var(--font);
-    display: flex; flex-direction: column; align-items: center; justify-content: space-between;
-    height: var(--tg-viewport-stable-height, 100dvh); max-height: 100dvh; padding: max(16px, env(safe-area-inset-top)) 16px max(20px, env(safe-area-inset-bottom));
+    display: flex; flex-direction: column; align-items: center; justify-content: space-between; padding: max(16px, env(safe-area-inset-top)) 16px max(20px, env(safe-area-inset-bottom));
     -webkit-tap-highlight-color: transparent; user-select: none; touch-action: manipulation;
     transition: background-color .25s ease;
   }
@@ -89,7 +90,7 @@
   const k = q.get('k') || '', topic = q.get('t') || '';
   const server = (q.get('s') || 'https://ntfy.sh').replace(/\/+$/, '');
   const GIRO = 282.74;
-  const VERSIONE = '20nov-1610';  // finisce nel registro del gestionale: si vede quale pagina ha usato il telefono
+  const VERSIONE = '20nov-1620';  // finisce nel registro del gestionale: si vede quale pagina ha usato il telefono
   let audio = null, wake = null, suonato = false, fermato = false, lampo = null;
   let programmati = [], oraSveglia = 0;
 
