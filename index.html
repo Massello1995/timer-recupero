@@ -125,7 +125,7 @@
   async function biglietto(e) {
     if (!k || !topic) return false;
     // con il biglietto va anche un controllo: la pagina ha il suono? è visibile o abbassata?
-    const corpo = JSON.stringify({ k, e, audio: audio ? audio.state : 'nessuno', vis: document.visibilityState });
+    const corpo = JSON.stringify({ k, e, audio: mediaVa ? 'file' : audio ? audio.state : 'nessuno', vis: document.visibilityState });
     for (let i = 0; i < 3; i++) {
       try {
         const ctl = new AbortController(), stop = setTimeout(() => ctl.abort(), 3000);
@@ -150,7 +150,7 @@
 
   const mmss = ms => { const s = Math.max(0, Math.ceil(ms / 1000)); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`; };
   const annuncia = t => { $('annuncio').textContent = ''; setTimeout(() => { $('annuncio').textContent = t; }, 50); };
-  const suonaOk = () => !!(audio && audio.state === 'running');
+  const suonaOk = () => mediaVa || !!(audio && audio.state === 'running');
 
   function vibra(forte) {
     try { if (tg && tg.HapticFeedback) { forte ? tg.HapticFeedback.notificationOccurred('warning') : tg.HapticFeedback.impactOccurred('light'); } } catch (e) {}
@@ -171,10 +171,26 @@
     return o;
   }
 
-  function sveglia(tra) {  // circa 4 secondi di "bip-bip-bip" forte (dal 20/11 pomeriggio, prima 5,3), tra "tra" secondi
+  function nota(freq, vol, quando) {  // un colpo di campanello nel motore audio (riserva del file): suona e sfuma
+    if (!audio) return [];
+    const t0 = audio.currentTime + (quando || 0), out = [];
+    [[1, 1], [2, 0.45], [3, 0.2]].forEach(([m, a]) => {
+      const o = audio.createOscillator(), g = audio.createGain();
+      o.type = 'sine'; o.frequency.value = freq * m;
+      g.gain.setValueAtTime(0.0001, t0);
+      g.gain.exponentialRampToValueAtTime(vol * a, t0 + 0.005);
+      g.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.6);
+      o.connect(g).connect(audio.destination);
+      o.start(t0); o.stop(t0 + 0.62);
+      out.push(o);
+    });
+    return out;
+  }
+
+  function sveglia(tra) {  // stesso arpeggio a campanello del file: 4 volte in 4 secondi, tra "tra" secondi
     const l = [];
-    for (let i = 0; i < 4; i++) l.push(bip(1046, 0.16, 0.9, (tra || 0) + i), bip(1318, 0.16, 0.9, (tra || 0) + i + 0.22), bip(1046, 0.16, 0.9, (tra || 0) + i + 0.44));
-    return l.filter(Boolean);
+    for (let i = 0; i < 4; i++) ARPEGGIO.forEach(([t0, f]) => l.push(...nota(f, 0.45, (tra || 0) + i + t0)));
+    return l;
   }
 
   function evidenziaNota() {
@@ -186,7 +202,7 @@
 
   // La sveglia si programma nel motore audio all'ora di fine: se abbassi la pagina dentro Telegram e il telefono la tiene viva, suona lo stesso.
   function programma() {
-    if (!suonaOk() || programmati.length || suonato) return;
+    if (mediaVa || !(audio && audio.state === 'running') || programmati.length || suonato) return;
     const tra = (fine - Date.now()) / 1000;
     if (tra <= 0.3) return;
     oraSveglia = audio.currentTime + tra;
@@ -195,6 +211,65 @@
   }
   function togliProgrammati() { programmati.forEach(o => { try { o.stop(); } catch (e) {} }); programmati = []; }
 
+  // ---- Sveglia come FILE AUDIO (dal 20/11 pomeriggio) ----
+  // Un file WAV fatto qui: quasi silenzio per tutto il recupero e poi la sveglia. Il telefono lo suona come una canzone:
+  // continua anche con la pagina abbassata, con altre app aperte o a schermo spento (il motore audio della pagina invece
+  // il telefono lo addormentava). Il motore audio resta solo di riserva, se il file non parte.
+  let media = null, mediaVa = false, mediaZero = 0, prontaMedia = false;
+  // Sveglia: arpeggio a campanello do-mi-sol-do acuto, 4 volte in 4 secondi (squillante, note che sfumano).
+  const ARPEGGIO = [[0, 1046.5], [0.12, 1318.5], [0.24, 1568], [0.36, 2093]];
+  function campanello(d, f) {  // un colpo di campanello: armoniche brillanti che sfumano
+    if (d < 0 || d > 0.6) return 0;
+    const att = Math.min(1, d / 0.004), dec = Math.exp(-d * 6.5), w = 2 * Math.PI * f * d;
+    return att * dec * (Math.sin(w) + 0.45 * Math.sin(2 * w) + 0.2 * Math.sin(3 * w) + 0.12 * Math.sin(4.2 * w) * Math.exp(-d * 12));
+  }
+  function creaSuono(silenzio) {
+    const R = 16000, n = Math.ceil((silenzio + 4.3) * R), buf = new ArrayBuffer(44 + n * 2), v = new DataView(buf);
+    const s = (o, t) => { for (let i = 0; i < t.length; i++) v.setUint8(o + i, t.charCodeAt(i)); };
+    s(0, 'RIFF'); v.setUint32(4, 36 + n * 2, true); s(8, 'WAVE'); s(12, 'fmt '); v.setUint32(16, 16, true); v.setUint16(20, 1, true);
+    v.setUint16(22, 1, true); v.setUint32(24, R, true); v.setUint32(28, R * 2, true); v.setUint16(32, 2, true); v.setUint16(34, 16, true);
+    s(36, 'data'); v.setUint32(40, n * 2, true);
+    const i0 = Math.floor(silenzio * R);
+    for (let i = 0; i < i0; i++) v.setInt16(44 + i * 2, Math.round(40 * Math.sin(2 * Math.PI * 30 * i / R)), true);  // non si sente
+    const note = [];
+    for (let g = 0; g < 4; g++) ARPEGGIO.forEach(([t0, f]) => note.push([g + t0, f]));
+    for (let i = i0; i < n; i++) {
+      const t = (i - i0) / R;
+      let x = 0;
+      for (const [t0, f] of note) if (t >= t0 && t - t0 < 0.6) x += campanello(t - t0, f);
+      v.setInt16(44 + i * 2, Math.round(Math.tanh(x * 0.75) * 31000), true);  // forte ma senza gracchiare
+    }
+    return URL.createObjectURL(new Blob([buf], { type: 'audio/wav' }));
+  }
+  function riallinea() {  // dopo una pausa il file si rimette al punto giusto: la sveglia cade sempre all'ora di fine
+    if (!media) return;
+    const p = (Date.now() - mediaZero) / 1000;
+    if (Math.abs(media.currentTime - p) > 0.4) { try { media.currentTime = Math.max(0, p); } catch (e) {} }
+  }
+  function avviaMedia() {
+    if (media) { if (media.paused && !fermato && !suonato) media.play().catch(() => {}); return; }
+    if (fermato || suonato || sec > 600) return;  // oltre 10 minuti il file sarebbe troppo grande: suona il motore audio
+    const tra = (fine - Date.now()) / 1000;
+    if (tra <= 0.5) return;
+    try {
+      media = new Audio(creaSuono(tra));
+      mediaZero = fine - tra * 1000;
+      media.addEventListener('playing', () => {
+        mediaVa = true; riallinea(); togliProgrammati(); aggiornaStato();
+        if (!prontaMedia || mutaDetta) { prontaMedia = true; mutaDetta = false; biglietto('pronta'); }
+      });
+      media.addEventListener('pause', () => {
+        if (fermato || media.ended) return;
+        mediaVa = false; aggiornaStato();
+        if (!mutaDetta) { mutaDetta = true; biglietto('muta'); }  // fermato dal telefono: il bot lo sa (riserva)
+        media.play().catch(() => {});
+        programma();
+      });
+      try { if ('mediaSession' in navigator) navigator.mediaSession.metadata = new MediaMetadata({ title: 'Recupero', artist: 'Sveglia a fine tempo' }); } catch (e) {}
+      media.play().catch(() => {});
+    } catch (e) { media = null; }
+  }
+
   function aggiornaStato() {
     const ok = suonaOk();
     $('stato').classList.toggle('on', ok);
@@ -202,12 +277,39 @@
   }
 
   // Il suono parte da solo se il telefono lo permette; se no basta un tocco qualsiasi sulla pagina (nessun riquadro da toccare).
+  // Il telefono addormenta l'audio di una pagina che resta muta (registro del 20/11: a fine tempo «suono suspended»
+  // anche a pagina aperta, e la sveglia non suonava). Un tono bassissimo e debolissimo, che non si sente, lo tiene sveglio.
+  let tenuta = null, mutaDetta = false;
+  function tieniSveglioAudio() {
+    if (!audio || tenuta || audio.state !== 'running') return;
+    try {
+      const o = audio.createOscillator(), g = audio.createGain();
+      o.frequency.value = 25; g.gain.value = 0.003;
+      o.connect(g).connect(audio.destination); o.start();
+      tenuta = o;
+    } catch (e) {}
+  }
   async function sblocca() {
+    avviaMedia();
     try {
       const AC = window.AudioContext || window.webkitAudioContext;
-      if (AC && !audio) audio = new AC();
+      if (AC && !audio) {
+        audio = new AC();
+        audio.onstatechange = () => {
+          aggiornaStato();
+          if (fermato || suonato || mediaVa) return;  // suona il file: il motore audio non conta
+          if (audio.state === 'running') {  // tornato acceso: sveglia di nuovo pronta
+            // da spento l'orologio dell'audio si ferma: la sveglia programmata prima suonerebbe in ritardo, si rifà
+            if (mutaDetta) { mutaDetta = false; togliProgrammati(); tieniSveglioAudio(); programma(); }  // programma() manda «pronta»
+            return;
+          }
+          audio.resume().catch(() => {});  // prova a riaccenderlo; intanto il bot sa che la sveglia può non suonare
+          if (!mutaDetta) { mutaDetta = true; biglietto('muta'); }
+        };
+      }
       if (audio && audio.state === 'suspended') await audio.resume();
     } catch (e) {}
+    tieniSveglioAudio();
     aggiornaStato();
     programma();
   }
@@ -234,6 +336,8 @@
   function fermaTutto() {
     fermato = true;
     togliProgrammati();
+    if (tenuta) { try { tenuta.stop(); } catch (e) {} tenuta = null; }
+    if (media) { try { media.pause(); } catch (e) {} }
     if (lampo) { clearInterval(lampo); lampo = null; }
     document.body.classList.remove('lampo');
     try { if (audio) audio.suspend(); } catch (e) {}
@@ -251,7 +355,9 @@
     suonato = true;
     annuncia('Recupero finito: prossima serie');
     const sento = suonaOk();
-    if (sento && !programmati.length) programmati = sveglia(0);  // se era già programmata sta suonando da sola
+    if (mediaVa) riallinea();  // il file suona da solo la sveglia (che è già nel file all'ora di fine)
+    else if (sento && !programmati.length) programmati = sveglia(0);  // se era già programmata sta suonando da sola
+    if (!sento && audio) audio.resume().then(() => { if (!fermato && audio.state === 'running') { togliProgrammati(); programmati = sveglia(0); } }).catch(() => {});
     biglietto(sento ? 'suonato' : 'fine');  // «suonato»: il bot non manda i suoi messaggi; «fine»: solo il controllo
     setTimeout(() => { if (!fermato) { fermaTutto(); chiudi(); } }, 6000);  // dopo la sveglia la pagina si chiude da sola
     let n = 0;
@@ -288,6 +394,7 @@
     tieniAcceso();
     if (programmati.length && audio && audio.currentTime < oraSveglia && Date.now() > fine + 5000) togliProgrammati();
     if (audio && audio.state === 'suspended' && !fermato) audio.resume().then(aggiornaStato).catch(() => {});
+    if (media && media.paused && !fermato && !suonato) media.play().catch(() => {});
   });
 
   // «avvio» dopo aver provato ad accendere il suono (al massimo 0,8 s: senza permesso il telefono può non rispondere mai)
