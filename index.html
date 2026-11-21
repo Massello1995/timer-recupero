@@ -90,7 +90,7 @@
   const k = q.get('k') || '', topic = q.get('t') || '';
   const server = (q.get('s') || 'https://ntfy.sh').replace(/\/+$/, '');
   const GIRO = 282.74;
-  const VERSIONE = '20nov-1630';  // finisce nel registro del gestionale: si vede quale pagina ha usato il telefono
+  const VERSIONE = '21nov-meno-biglietti';  // finisce nel registro del gestionale: si vede quale pagina ha usato il telefono
   let audio = null, wake = null, suonato = false, fermato = false, lampo = null;
   let programmati = [], oraSveglia = 0;
 
@@ -126,14 +126,16 @@
   if (fine - adesso > sec * 1000 + 2000) fine = adesso + sec * 1000;  // orologio del telefono diverso da quello del PC
   const giaFinito = fine - adesso < -5000;
 
-  // ---- postino (ntfy.sh): un biglietto solo; se non passa, al massimo 3 tentativi ----
-  async function biglietto(e) {
+  // ---- postino (ntfy.sh): dal 21/11 pochissimi biglietti (limite gratuito di ntfy.sh per indirizzo: col wifi della
+  // palestra tutti i telefoni escono con lo stesso). Solo: «avvio» (con «pronta» dentro), «pronta» (solo se il suono
+  // arriva dopo), «muta» (suono spento dal telefono da più di 3 s), «chiusa», «ferma». Al massimo 2 tentativi. ----
+  async function biglietto(e, extra) {
     if (!k || !topic) return false;
     // con il biglietto va anche un controllo: la pagina ha il suono? è visibile o abbassata?
-    const corpo = JSON.stringify({ k, e, v: VERSIONE, attiva: tg ? tg.isActive : null, tgv: tg ? tg.version : null, audio: mediaVa ? 'file' : audio ? audio.state : 'nessuno', vis: document.visibilityState });
-    for (let i = 0; i < 3; i++) {
+    const corpo = JSON.stringify({ k, e, ...(extra || {}), v: VERSIONE, attiva: tg ? tg.isActive : null, tgv: tg ? tg.version : null, audio: mediaVa ? 'file' : audio ? audio.state : 'nessuno', vis: document.visibilityState });
+    for (let i = 0; i < 2; i++) {
       try {
-        const ctl = new AbortController(), stop = setTimeout(() => ctl.abort(), 3000);
+        const ctl = new AbortController(), stop = setTimeout(() => ctl.abort(), 10000);
         const r = await fetch(`${server}/${encodeURIComponent(topic)}`, { method: 'POST', body: corpo, keepalive: true, signal: ctl.signal });
         clearTimeout(stop);
         if (r.ok) return true;
@@ -147,6 +149,7 @@
   try {
     if (k && topic && window.EventSource) {
       const es = new EventSource(`${server}/${encodeURIComponent(topic)}/sse`);
+      es.onerror = () => { try { es.close(); } catch (err) {} };  // rifiutato o caduto: niente tentativi a raffica
       es.onmessage = ev => {
         try { const m = JSON.parse(JSON.parse(ev.data).message || '{}'); if (m.k === k && m.e === 'stop') { es.close(); fermaTutto(); chiudi(); } } catch (err) {}
       };
@@ -213,7 +216,7 @@
     oraSveglia = audio.currentTime + tra;
     programmati = sveglia(tra);
     chiudiAllaFineSuono(programmati);
-    if (programmati.length) biglietto('pronta');  // la sveglia è pronta nel motore audio: il bot non deve mandare messaggi
+    if (programmati.length) diciPronta();  // la sveglia è pronta nel motore audio: il bot non deve mandare messaggi
   }
   function togliProgrammati() { programmati.forEach(o => { try { o.stop(); } catch (e) {} }); programmati = []; }
 
@@ -262,7 +265,7 @@
       mediaZero = fine - tra * 1000;
       media.addEventListener('playing', () => {
         mediaVa = true; riallinea(); togliProgrammati(); aggiornaStato();
-        if (!prontaMedia || mutaDetta) { prontaMedia = true; mutaDetta = false; biglietto('pronta'); }
+        prontaMedia = true; annullaMuta(); diciPronta();
       });
       media.addEventListener('ended', () => {  // sveglia finita (vale anche se la pagina è abbassata e i timer sono fermi)
         if (!fermato) { fermaTutto(); chiudi(); }
@@ -270,7 +273,7 @@
       media.addEventListener('pause', () => {
         if (fermato || media.ended) return;
         mediaVa = false; aggiornaStato();
-        if (!mutaDetta) { mutaDetta = true; biglietto('muta'); }  // fermato dal telefono: il bot lo sa (riserva)
+        forseMuta();  // fermato dal telefono: se dura più di 3 s il bot lo sa (riserva)
         media.play().catch(() => {});
         programma();
       });
@@ -288,7 +291,18 @@
   // Il suono parte da solo se il telefono lo permette; se no basta un tocco qualsiasi sulla pagina (nessun riquadro da toccare).
   // Il telefono addormenta l'audio di una pagina che resta muta (registro del 20/11: a fine tempo «suono suspended»
   // anche a pagina aperta, e la sveglia non suonava). Un tono bassissimo e debolissimo, che non si sente, lo tiene sveglio.
-  let tenuta = null, mutaDetta = false;
+  let tenuta = null, mutaDetta = false, avvioDetto = false, prontaDetta = false, attesaMuta = null;
+  // «pronta» si manda solo dopo l'avvio (all'avvio va dentro il biglietto «avvio») e una volta sola, o di nuovo dopo «muta»
+  function diciPronta() {
+    if (!avvioDetto || (prontaDetta && !mutaDetta) || fermato || suonato) return;
+    prontaDetta = true; mutaDetta = false; biglietto('pronta');
+  }
+  // «muta» solo se il suono resta spento più di 3 secondi (all'apertura il telefono lo spegne e riaccende in un attimo)
+  function forseMuta() {
+    if (mutaDetta || attesaMuta || fermato || suonato) return;
+    attesaMuta = setTimeout(() => { attesaMuta = null; if (!suonaOk() && !fermato && !suonato && avvioDetto) { mutaDetta = true; biglietto('muta'); } }, 3000);
+  }
+  function annullaMuta() { if (attesaMuta) { clearTimeout(attesaMuta); attesaMuta = null; } }
   function tieniSveglioAudio() {
     if (!audio || tenuta || audio.state !== 'running') return;
     try {
@@ -309,11 +323,11 @@
           if (fermato || suonato || mediaVa) return;  // suona il file: il motore audio non conta
           if (audio.state === 'running') {  // tornato acceso: sveglia di nuovo pronta
             // da spento l'orologio dell'audio si ferma: la sveglia programmata prima suonerebbe in ritardo, si rifà
-            if (mutaDetta) { mutaDetta = false; togliProgrammati(); tieniSveglioAudio(); programma(); }  // programma() manda «pronta»
+            annullaMuta(); if (mutaDetta) { togliProgrammati(); tieniSveglioAudio(); programma(); }  // programma() manda «pronta»
             return;
           }
           audio.resume().catch(() => {});  // prova a riaccenderlo; intanto il bot sa che la sveglia può non suonare
-          if (!mutaDetta) { mutaDetta = true; biglietto('muta'); }
+          forseMuta();
         };
       }
       if (audio && audio.state === 'suspended') await audio.resume();
@@ -335,7 +349,6 @@
   function chiudi() {
     const abbassata = document.visibilityState !== 'visible' || (tg && tg.isActive === false);
     if (abbassata) daChiudere = true;
-    if (!chiusuraDetta) { chiusuraDetta = true; biglietto('chiudo'); }  // nel registro: la pagina ha provato a chiudersi
     if (abbassata) {
       // Telegram ignora la chiusura di una pagina abbassata: prima si prova a farla tornare su (expand), poi si chiude.
       try { if (tg && tg.expand) tg.expand(); } catch (e) {}
@@ -376,7 +389,6 @@
     $('pieno').style.strokeDashoffset = GIRO;
     if (suonato || giaFinito || Date.now() - fine >= 5000) {  // risvegliata molto dopo la fine: niente sveglia in ritardo, si chiude
       if (!giaFinito && !fermato) {
-        if (!suonato) biglietto(suonaOk() ? 'suonato' : 'fine');
         suonato = true; fermaTutto(); chiudi();
       }
       return;
@@ -387,7 +399,6 @@
     if (mediaVa) riallinea();  // il file suona da solo la sveglia (che è già nel file all'ora di fine)
     else if (sento && !programmati.length) { programmati = sveglia(0); chiudiAllaFineSuono(programmati); }  // se era già programmata sta suonando da sola
     if (!sento && audio) audio.resume().then(() => { if (!fermato && audio.state === 'running') { togliProgrammati(); programmati = sveglia(0); } }).catch(() => {});
-    biglietto(sento ? 'suonato' : 'fine');  // «suonato»: il bot non manda i suoi messaggi; «fine»: solo il controllo
     // Dopo la sveglia (4 s) la pagina si chiude da sola. Abbassata, Telegram la tiene ferma e la risveglia solo per un
     // attimo (registro 20/11: «suonato» arrivato 6 s dopo la fine): se la sveglia è già passata si chiude SUBITO.
     const chiudiTra = fine + 4500 - Date.now();
@@ -431,7 +442,7 @@
   });
 
   // «avvio» dopo aver provato ad accendere il suono (al massimo 0,8 s: senza permesso il telefono può non rispondere mai)
-  Promise.race([sblocca(), new Promise(r => setTimeout(r, 800))]).then(() => { if (q.get('avvio') && !giaFinito && !ricaricata) biglietto('avvio'); });
+  Promise.race([sblocca(), new Promise(r => setTimeout(r, 800))]).then(() => { if (q.get('avvio') && !giaFinito && !ricaricata) { const pr = suonaOk(); avvioDetto = true; prontaDetta = pr; biglietto('avvio', { pronta: pr }); } else avvioDetto = true; });
   tieniAcceso();
   setTimeout(aggiornaStato, 600);
   if (giaFinito) { finito(); $('sotto').textContent = 'Il recupero era già finito'; }
