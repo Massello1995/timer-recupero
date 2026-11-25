@@ -99,7 +99,7 @@
   const k = q.get('k') || '', topic = q.get('t') || '';
   const server = (q.get('s') || 'https://ntfy.sh').replace(/\/+$/, '');
   const GIRO = 282.74;
-  const VERSIONE = '24nov-piu-meno-5';  // finisce nel registro del gestionale: si vede quale pagina ha usato il telefono
+  const VERSIONE = '25nov-3-squilli';  // finisce nel registro del gestionale: si vede quale pagina ha usato il telefono
   let audio = null, wake = null, suonato = false, fermato = false, lampo = null;
   let programmati = [], oraSveglia = 0;
 
@@ -207,9 +207,9 @@
     return out;
   }
 
-  function sveglia(tra) {  // stesso arpeggio a campanello del file: 4 volte in 4 secondi, tra "tra" secondi
+  function sveglia(tra) {  // stesso arpeggio a campanello del file: SQUILLI volte, uno al secondo, tra "tra" secondi
     const l = [];
-    for (let i = 0; i < 4; i++) ARPEGGIO.forEach(([t0, f]) => l.push(...nota(f, 0.45, (tra || 0) + i + t0)));
+    for (let i = 0; i < SQUILLI; i++) ARPEGGIO.forEach(([t0, f]) => l.push(...nota(f, 0.45, (tra || 0) + i + t0)));
     return l;
   }
 
@@ -237,7 +237,8 @@
   // continua anche con la pagina abbassata, con altre app aperte o a schermo spento (il motore audio della pagina invece
   // il telefono lo addormentava). Il motore audio resta solo di riserva, se il file non parte.
   let media = null, mediaVa = false, mediaZero = 0, prontaMedia = false;
-  // Sveglia: arpeggio a campanello do-mi-sol-do acuto, 4 volte in 4 secondi (squillante, note che sfumano).
+  // Sveglia: arpeggio a campanello do-mi-sol-do acuto, uno al secondo (squillante, note che sfumano). Dal 25/11 3 squilli (prima 4).
+  const SQUILLI = 3;
   const ARPEGGIO = [[0, 1046.5], [0.12, 1318.5], [0.24, 1568], [0.36, 2093]];
   function campanello(d, f) {  // un colpo di campanello: armoniche brillanti che sfumano
     if (d < 0 || d > 0.6) return 0;
@@ -245,7 +246,7 @@
     return att * dec * (Math.sin(w) + 0.45 * Math.sin(2 * w) + 0.2 * Math.sin(3 * w) + 0.12 * Math.sin(4.2 * w) * Math.exp(-d * 12));
   }
   function creaSuono(silenzio) {
-    const R = 16000, n = Math.ceil((silenzio + 4.3) * R), buf = new ArrayBuffer(44 + n * 2), v = new DataView(buf);
+    const R = 16000, n = Math.ceil((silenzio + SQUILLI + 0.3) * R), buf = new ArrayBuffer(44 + n * 2), v = new DataView(buf);
     const s = (o, t) => { for (let i = 0; i < t.length; i++) v.setUint8(o + i, t.charCodeAt(i)); };
     s(0, 'RIFF'); v.setUint32(4, 36 + n * 2, true); s(8, 'WAVE'); s(12, 'fmt '); v.setUint32(16, 16, true); v.setUint16(20, 1, true);
     v.setUint16(22, 1, true); v.setUint32(24, R, true); v.setUint32(28, R * 2, true); v.setUint16(32, 2, true); v.setUint16(34, 16, true);
@@ -253,7 +254,7 @@
     const i0 = Math.floor(silenzio * R);
     for (let i = 0; i < i0; i++) v.setInt16(44 + i * 2, Math.round(40 * Math.sin(2 * Math.PI * 30 * i / R)), true);  // non si sente
     const note = [];
-    for (let g = 0; g < 4; g++) ARPEGGIO.forEach(([t0, f]) => note.push([g + t0, f]));
+    for (let g = 0; g < SQUILLI; g++) ARPEGGIO.forEach(([t0, f]) => note.push([g + t0, f]));
     for (let i = i0; i < n; i++) {
       const t = (i - i0) / R;
       let x = 0;
@@ -453,7 +454,7 @@
     if (mediaVa) riallinea();  // il file suona da solo la sveglia (che è già nel file all'ora di fine)
     else if (sento && !programmati.length) { programmati = sveglia(0); chiudiAllaFineSuono(programmati); }  // se era già programmata sta suonando da sola
     if (!sento && audio) audio.resume().then(() => { if (!fermato && audio.state === 'running') { togliProgrammati(); programmati = sveglia(0); } }).catch(() => {});
-    // Dopo la sveglia (4 s) la pagina si chiude da sola. Abbassata, Telegram la tiene ferma e la risveglia solo per un
+    // Dopo la sveglia (3 s) la pagina si chiude da sola. Abbassata, Telegram la tiene ferma e la risveglia solo per un
     // attimo (registro 20/11: «suonato» arrivato 6 s dopo la fine): se la sveglia è già passata si chiude SUBITO.
     const chiudiTra = fine + 4500 - Date.now();
     if (chiudiTra <= 0) { fermaTutto(); chiudi(); }
