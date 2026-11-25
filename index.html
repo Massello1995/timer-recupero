@@ -55,6 +55,11 @@
   .nota { font-size: 14px; color: var(--muto); text-align: center; line-height: 1.45; margin: 2px 4px 0; }
   body.fine .nota, body.fine .titolo { color: #f3d6da; }
   .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+  /* − 5 s / + 5 s (dal 24/11/2026): tasti secondari, grandi per le dita sudate, staccati da «Ferma» */
+  .regola { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .regola[hidden] { display: none; }
+  button.sec { background: var(--scheda); color: var(--testo); border: 1px solid var(--bordo); font-variant-numeric: tabular-nums; }
+  button.sec:disabled { opacity: .4; cursor: default; }
 </style>
 </head>
 <body>
@@ -76,6 +81,10 @@
 </main>
 
 <footer>
+  <div class="regola" id="regola">
+    <button id="meno" class="sec" type="button" aria-label="Togli 5 secondi">− 5 s</button>
+    <button id="piu" class="sec" type="button" aria-label="Aggiungi 5 secondi">+ 5 s</button>
+  </div>
   <button id="fermo" type="button">Ferma</button>
   <p class="nota" id="nota">Abbassala strisciando verso il basso la barra in alto: suona lo stesso. «Ferma» ferma il recupero e la chiude.</p>
 </footer>
@@ -86,11 +95,11 @@
   const tg = window.Telegram && window.Telegram.WebApp;
   const $ = id => document.getElementById(id);
   const q = new URLSearchParams(location.search);
-  const sec = Math.max(1, Math.min(3600, parseInt(q.get('sec'), 10) || 0));
+  let sec = Math.max(1, Math.min(3600, parseInt(q.get('sec'), 10) || 0));  // cambia con − 5 s / + 5 s
   const k = q.get('k') || '', topic = q.get('t') || '';
   const server = (q.get('s') || 'https://ntfy.sh').replace(/\/+$/, '');
   const GIRO = 282.74;
-  const VERSIONE = '21nov-meno-biglietti';  // finisce nel registro del gestionale: si vede quale pagina ha usato il telefono
+  const VERSIONE = '24nov-piu-meno-5';  // finisce nel registro del gestionale: si vede quale pagina ha usato il telefono
   let audio = null, wake = null, suonato = false, fermato = false, lampo = null;
   let programmati = [], oraSveglia = 0;
 
@@ -117,10 +126,13 @@
   else fine = parseInt(q.get('fine'), 10) || 0;            // riaperta: l'ora di fine la dice il bot
   try { if (q.get('k') && fine) localStorage.setItem(memo, String(fine)); } catch (e) {}
   const ricaricata = !!(q.get('avvio') && ricordata && fine === ricordata);
+  let spostati = 0;  // secondi aggiunti/tolti con ± 5 s dall'avvio (ricordati se Telegram ricarica la pagina)
+  try { if (ricaricata) spostati = parseInt(localStorage.getItem(memo + '_d'), 10) || 0; } catch (e) {}
+  sec = Math.max(1, sec + spostati);
   if (!q.get('sec') || !fine) {
     $('tempo').textContent = '--:--';
     $('sotto').textContent = 'Apri il timer dal tasto del bot';
-    $('stato').hidden = true; $('nota').hidden = true;
+    $('stato').hidden = true; $('nota').hidden = true; $('regola').hidden = true;
     return;
   }
   if (fine - adesso > sec * 1000 + 2000) fine = adesso + sec * 1000;  // orologio del telefono diverso da quello del PC
@@ -261,17 +273,19 @@
     const tra = (fine - Date.now()) / 1000;
     if (tra <= 0.5) return;
     try {
-      media = new Audio(creaSuono(tra));
+      const m = media = new Audio(creaSuono(tra));  // m: ogni ascoltatore vale solo per il suo file (± 5 s lo rifà)
       mediaZero = fine - tra * 1000;
       media.addEventListener('playing', () => {
+        if (m !== media) return;
         mediaVa = true; riallinea(); togliProgrammati(); aggiornaStato();
         prontaMedia = true; annullaMuta(); diciPronta();
       });
       media.addEventListener('ended', () => {  // sveglia finita (vale anche se la pagina è abbassata e i timer sono fermi)
+        if (m !== media) return;
         if (!fermato) { fermaTutto(); chiudi(); }
       });
       media.addEventListener('pause', () => {
-        if (fermato || media.ended) return;
+        if (m !== media || fermato || media.ended) return;
         mediaVa = false; aggiornaStato();
         forseMuta();  // fermato dal telefono: se dura più di 3 s il bot lo sa (riserva)
         media.play().catch(() => {});
@@ -281,6 +295,38 @@
       media.play().catch(() => {});
     } catch (e) { media = null; }
   }
+
+  // ---- − 5 s / + 5 s (dal 24/11/2026): l'ora di fine si sposta subito, senza conferme. La sveglia si sposta con lei
+  // (il file si riallinea o si rifà, il motore audio si riprogramma). Il bot lo sa con UN biglietto «tempo», 1,5 s dopo
+  // l'ultimo tocco (pochi biglietti per ntfy.sh), con il totale spostato dall'avvio: così il suo recupero finisce insieme.
+  let attesaTempo = null;
+  function sposta(d) {
+    if (fermato || suonato) return;
+    const ora = Date.now();
+    const nuova = Math.min(ora + 3600 * 1000, Math.max(ora + 1000, fine + d * 1000));  // mai sotto 1 s, mai oltre 1 ora
+    const fatto = Math.round((nuova - fine) / 1000);
+    if (!fatto) { vibra(false); return; }
+    fine = nuova; sec = Math.max(1, sec + fatto); spostati += fatto;
+    try { if (k) { localStorage.setItem(memo, String(fine)); localStorage.setItem(memo + '_d', String(spostati)); } } catch (e) {}
+    if (media) {
+      mediaZero += fatto * 1000;
+      if (Date.now() - mediaZero < 0) {  // il file è più corto del nuovo tempo: se ne fa un altro (il tocco permette di suonarlo)
+        const vecchio = media; media = null; mediaVa = false;
+        try { vecchio.pause(); vecchio.removeAttribute('src'); vecchio.load(); } catch (e) {}
+        avviaMedia();
+      } else riallinea();
+    }
+    if (programmati.length) { togliProgrammati(); programma(); }
+    vibra(false);
+    annuncia(`Recupero ${mmss(fine - Date.now())}`);
+    giroSubito();
+    if (q.get('avvio') || k) {
+      if (attesaTempo) clearTimeout(attesaTempo);
+      attesaTempo = setTimeout(() => { attesaTempo = null; if (!fermato) biglietto('tempo', { d: spostati }); }, 1500);
+    }
+  }
+  $('meno').onclick = () => sposta(-5);
+  $('piu').onclick = () => sposta(5);
 
   function aggiornaStato() {
     const ok = suonaOk();
@@ -346,7 +392,14 @@
   // Dal 20/11 sera si chiude ANCHE abbassata (il titolare vuole che la barretta sotto la chat sparisca da sola a fine
   // recupero); se Telegram non la chiude mentre è abbassata, ci si riprova appena torna visibile.
   let chiusuraDetta = false;
+  // Alla chiusura la tastiera del telefono non deve aprirsi (24/11): niente resta selezionato nella pagina e, dove
+  // Telegram lo permette (Bot API 9.1), si chiede di nascondere la tastiera prima di chiudere.
+  function niente_tastiera() {
+    try { if (document.activeElement && document.activeElement.blur) document.activeElement.blur(); } catch (e) {}
+    try { if (tg && tg.hideKeyboard) tg.hideKeyboard(); } catch (e) {}
+  }
   function chiudi() {
+    niente_tastiera();
     const abbassata = document.visibilityState !== 'visible' || (tg && tg.isActive === false);
     if (abbassata) daChiudere = true;
     if (abbassata) {
@@ -378,12 +431,13 @@
     document.body.classList.remove('lampo');
     try { if (audio) audio.suspend(); } catch (e) {}
     try { if (navigator.vibrate) navigator.vibrate(0); } catch (e) {}
-    $('fermo').hidden = true;
+    $('fermo').hidden = true; $('regola').hidden = true;
     $('sotto').textContent = 'Sveglia fermata';
   }
 
   function finito() {
     document.body.classList.add('fine');
+    $('regola').hidden = true;
     $('tempo').textContent = 'Prossima serie!';
     $('sotto').textContent = '';
     $('pieno').style.strokeDashoffset = GIRO;
@@ -412,13 +466,18 @@
     }, 500);
   }
 
+  function disegna(resto) {
+    $('tempo').textContent = mmss(resto);
+    $('pieno').style.strokeDashoffset = GIRO * (1 - Math.min(1, resto / (sec * 1000)));
+    $('sotto').textContent = resto <= 10000 ? 'Preparati' : `di ${mmss(sec * 1000)}`;
+    $('meno').disabled = resto <= 1500;
+  }
+  function giroSubito() { const resto = fine - Date.now(); if (resto > 0 && !fermato) disegna(resto); }  // dopo ± 5 s
   function giro() {
     if (fermato) return;
     const resto = fine - Date.now();
     if (resto <= 0) { finito(); return; }
-    $('tempo').textContent = mmss(resto);
-    $('pieno').style.strokeDashoffset = GIRO * (1 - Math.min(1, resto / (sec * 1000)));
-    $('sotto').textContent = resto <= 10000 ? 'Preparati' : `di ${mmss(sec * 1000)}`;
+    disegna(resto);
     setTimeout(giro, Math.min(250, resto));
   }
 

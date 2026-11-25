@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex">
+<title>Cronometro</title>
+<!-- Cronometro del bot personal (Mini App, dal 24/11/2026). Non contiene dati e non manda niente a nessuno: il tempo lo
+     tiene il telefono (memoria della pagina, una per codice «k» = chat + cliente). Chiusa e riaperta, continua da dove era. -->
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<style>
+  :root {
+    --canvas: #1d2024; --scheda: #262a2f; --bordo: #3a3f46; --testo: #e3e5e9; --muto: #a6adb7; --ok: #4fc58d;
+    --font: "Barlow", "Segoe UI", system-ui, -apple-system, Roboto, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; overflow: hidden; background: var(--canvas); }
+  body {
+    color: var(--testo); font-family: var(--font); display: flex; flex-direction: column; align-items: center;
+    padding: max(16px, env(safe-area-inset-top)) 16px max(20px, env(safe-area-inset-bottom));
+    -webkit-tap-highlight-color: transparent; user-select: none; touch-action: manipulation;
+  }
+  header { text-align: center; width: 100%; }
+  .titolo { font-size: 18px; font-weight: 600; letter-spacing: .02em; color: var(--muto); margin: 4px 0 0; }
+  .stato { display: inline-flex; align-items: center; gap: 8px; margin-top: 10px; padding: 7px 13px; border-radius: 999px;
+           font-size: 14px; font-weight: 600; background: var(--scheda); border: 1px solid var(--bordo); color: var(--muto); }
+  .stato.on { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 45%, transparent); }
+  .stato i { width: 9px; height: 9px; border-radius: 50%; background: currentColor; }
+  main { flex: 1; width: 100%; max-width: 420px; display: flex; flex-direction: column; align-items: center; min-height: 0; }
+  .tempo { font-variant-numeric: tabular-nums; font-weight: 700; font-size: min(20vw, 13dvh, 104px); line-height: 1;
+           letter-spacing: -.02em; margin: 6dvh 0 4px; }
+  .tempo small { font-size: .45em; color: var(--muto); font-weight: 600; }
+  .giro-ora { font-variant-numeric: tabular-nums; font-size: 17px; color: var(--muto); min-height: 1.4em; }
+  ol { list-style: none; margin: 16px 0 12px; padding: 0; width: 100%; overflow-y: auto; flex: 1; min-height: 0;
+       border-top: 1px solid var(--bordo); }
+  li { display: grid; grid-template-columns: 1fr auto auto; gap: 14px; align-items: baseline; padding: 11px 4px;
+       border-bottom: 1px solid var(--bordo); font-variant-numeric: tabular-nums; font-size: 17px; }
+  li span:first-child { color: var(--muto); font-size: 15px; }
+  li span:last-child { color: var(--muto); font-size: 14px; min-width: 6.2em; text-align: right; }
+  footer { width: 100%; max-width: 420px; display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  button { font: inherit; font-size: 18px; font-weight: 700; min-height: 60px; border-radius: 14px; border: 0; cursor: pointer; width: 100%; }
+  button:focus-visible { outline: 3px solid #fff; outline-offset: 3px; }
+  button:active { filter: brightness(.92); }
+  button:disabled { opacity: .4; cursor: default; }
+  .sec { background: var(--scheda); color: var(--testo); border: 1px solid var(--bordo); }
+  .pri { background: #fff; color: #1d2024; }
+  .pri.va { background: var(--ok); color: #10241a; }
+  .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+</style>
+</head>
+<body>
+<header>
+  <p class="titolo">Cronometro</p>
+  <span class="stato" id="stato" role="status"><i aria-hidden="true"></i><span id="statoTesto">Fermo</span></span>
+</header>
+
+<main>
+  <div class="tempo" id="tempo" role="timer" aria-live="off">0:00<small>,0</small></div>
+  <div class="giro-ora" id="giroOra"></div>
+  <ol id="giri" aria-label="Giri"></ol>
+</main>
+
+<footer>
+  <button id="sinistra" class="sec" type="button" disabled>Azzera</button>
+  <button id="destra" class="pri" type="button">Avvia</button>
+</footer>
+<div class="sr" aria-live="polite" id="annuncio"></div>
+
+<script>
+(() => {
+  const tg = window.Telegram && window.Telegram.WebApp;
+  const $ = id => document.getElementById(id);
+  const q = new URLSearchParams(location.search);
+  const memo = 'crono_' + (q.get('k') || 'x');
+  // stato: dal = istante in cui è ripartito (0 = fermo), prima = millisecondi già contati, giri = tempi totali dei giri
+  let st = { dal: 0, prima: 0, giri: [] };
+  try { const v = JSON.parse(localStorage.getItem(memo) || 'null'); if (v && Array.isArray(v.giri)) st = v; } catch (e) {}
+  let wake = null, ciclo = null;
+
+  try {
+    if (tg) {
+      tg.ready(); tg.expand();
+      if (tg.setHeaderColor) tg.setHeaderColor('#1d2024');
+      if (tg.setBackgroundColor) tg.setBackgroundColor('#1d2024');
+    }
+  } catch (e) {}
+
+  const salva = () => { try { localStorage.setItem(memo, JSON.stringify(st)); } catch (e) {} };
+  const tot = () => st.prima + (st.dal ? Date.now() - st.dal : 0);
+  const va = () => !!st.dal;
+  function testo(ms, conDecimi) {  // 1:05,3 · 1:02:05,3
+    const d = Math.floor(ms / 100) % 10, s = Math.floor(ms / 1000), h = Math.floor(s / 3600), m = Math.floor(s / 60) % 60, ss = s % 60;
+    const base = h ? `${h}:${String(m).padStart(2, '0')}:${String(ss).padStart(2, '0')}` : `${m}:${String(ss).padStart(2, '0')}`;
+    return conDecimi ? [base, ',' + d] : base;
+  }
+  const annuncia = t => { $('annuncio').textContent = ''; setTimeout(() => { $('annuncio').textContent = t; }, 50); };
+  function vibra() {
+    try { if (tg && tg.HapticFeedback) tg.HapticFeedback.impactOccurred('light'); else if (navigator.vibrate) navigator.vibrate(30); } catch (e) {}
+  }
+
+  function disegna() {
+    const t = tot(), [b, d] = testo(t, true);
+    $('tempo').firstChild.nodeValue = b;
+    $('tempo').lastChild.textContent = d;
+    const ultimo = st.giri.length ? st.giri[st.giri.length - 1] : 0;
+    $('giroOra').textContent = st.giri.length ? `Giro ${st.giri.length + 1} · ${testo(t - ultimo, true).join('')}` : '';
+  }
+  function disegnaGiri() {
+    const ol = $('giri');
+    ol.textContent = '';
+    for (let i = st.giri.length - 1; i >= 0; i--) {  // il più recente in alto
+      const li = document.createElement('li'), parz = st.giri[i] - (i ? st.giri[i - 1] : 0);
+      [`Giro ${i + 1}`, testo(parz, true).join(''), testo(st.giri[i], true).join('')].forEach(x => {
+        const s = document.createElement('span'); s.textContent = x; li.appendChild(s);
+      });
+      ol.appendChild(li);
+    }
+  }
+  function tasti() {
+    const d = $('destra'), s = $('sinistra');
+    d.textContent = va() ? 'Ferma' : (tot() ? 'Riprendi' : 'Avvia');
+    d.classList.toggle('va', !va());
+    s.textContent = va() ? 'Giro' : 'Azzera';
+    s.disabled = !va() && !tot();
+    $('stato').classList.toggle('on', va());
+    $('statoTesto').textContent = va() ? 'In corso' : (tot() ? 'In pausa' : 'Fermo');
+  }
+  function gira() {
+    if (ciclo) clearInterval(ciclo);
+    ciclo = va() ? setInterval(disegna, 100) : null;
+    disegna();
+  }
+  async function tieniAcceso(si) {
+    try {
+      if (si && 'wakeLock' in navigator && !wake) { wake = await navigator.wakeLock.request('screen'); wake.addEventListener('release', () => { wake = null; }); }
+      if (!si && wake) { await wake.release(); wake = null; }
+    } catch (e) {}
+  }
+
+  $('destra').onclick = () => {
+    if (va()) { st.prima = tot(); st.dal = 0; annuncia(`Fermato a ${testo(st.prima)}`); }
+    else { st.dal = Date.now(); annuncia('Partito'); }
+    salva(); vibra(); tasti(); gira(); tieniAcceso(va());
+  };
+  $('sinistra').onclick = () => {
+    if (va()) { st.giri.push(tot()); annuncia(`Giro ${st.giri.length}`); }
+    else { st = { dal: 0, prima: 0, giri: [] }; annuncia('Azzerato'); }
+    salva(); vibra(); disegnaGiri(); tasti(); disegna();
+  };
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') { gira(); if (va()) tieniAcceso(true); }
+    else { try { if (document.activeElement && document.activeElement.blur) document.activeElement.blur(); } catch (e) {} }
+  });
+  window.addEventListener('pagehide', () => { try { if (document.activeElement && document.activeElement.blur) document.activeElement.blur(); if (tg && tg.hideKeyboard) tg.hideKeyboard(); } catch (e) {} });
+
+  disegnaGiri(); tasti(); gira(); if (va()) tieniAcceso(true);
+})();
+</script>
+</body>
+</html>
